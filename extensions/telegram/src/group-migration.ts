@@ -12,6 +12,38 @@ export type TelegramGroupMigrationResult = {
   scopes: MigrationScope[];
 };
 
+const MAX_CHAT_ID_LENGTH = 256;
+const MAX_ACCOUNT_ID_LENGTH = 256;
+const VALID_CHAT_ID_PATTERN = /^-?[a-zA-Z0-9_@.]+$/;
+
+function sanitizeChatId(chatId: unknown): string | null {
+  if (typeof chatId !== "string") {
+    return null;
+  }
+  const trimmed = chatId.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_CHAT_ID_LENGTH) {
+    return null;
+  }
+  if (!VALID_CHAT_ID_PATTERN.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
+function sanitizeAccountId(accountId: unknown): string | null {
+  if (accountId === null || accountId === undefined) {
+    return null;
+  }
+  if (typeof accountId !== "string") {
+    return null;
+  }
+  const trimmed = accountId.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_ACCOUNT_ID_LENGTH) {
+    return null;
+  }
+  return trimmed;
+}
+
 function resolveAccountGroups(
   cfg: OpenClawConfig,
   accountId?: string | null,
@@ -19,7 +51,11 @@ function resolveAccountGroups(
   if (!accountId) {
     return {};
   }
-  const normalized = normalizeAccountId(accountId);
+  const sanitized = sanitizeAccountId(accountId);
+  if (!sanitized) {
+    return {};
+  }
+  const normalized = normalizeAccountId(sanitized);
   const accounts = cfg.channels?.telegram?.accounts;
   if (!accounts || typeof accounts !== "object") {
     return {};
@@ -42,17 +78,22 @@ export function migrateTelegramGroupsInPlace(
   if (!groups) {
     return { migrated: false, skippedExisting: false };
   }
-  if (oldChatId === newChatId) {
+  const sanitizedOld = sanitizeChatId(oldChatId);
+  const sanitizedNew = sanitizeChatId(newChatId);
+  if (!sanitizedOld || !sanitizedNew) {
     return { migrated: false, skippedExisting: false };
   }
-  if (!Object.hasOwn(groups, oldChatId)) {
+  if (sanitizedOld === sanitizedNew) {
     return { migrated: false, skippedExisting: false };
   }
-  if (Object.hasOwn(groups, newChatId)) {
+  if (!Object.hasOwn(groups, sanitizedOld)) {
+    return { migrated: false, skippedExisting: false };
+  }
+  if (Object.hasOwn(groups, sanitizedNew)) {
     return { migrated: false, skippedExisting: true };
   }
-  groups[newChatId] = groups[oldChatId];
-  delete groups[oldChatId];
+  groups[sanitizedNew] = groups[sanitizedOld];
+  delete groups[sanitizedOld];
   return { migrated: true, skippedExisting: false };
 }
 
@@ -66,6 +107,13 @@ export function migrateTelegramGroupConfig(params: {
   let migrated = false;
   let skippedExisting = false;
 
+  const sanitizedOldChatId = sanitizeChatId(params.oldChatId);
+  const sanitizedNewChatId = sanitizeChatId(params.newChatId);
+
+  if (!sanitizedOldChatId || !sanitizedNewChatId) {
+    return { migrated: false, skippedExisting: false, scopes: [] };
+  }
+
   const migrationTargets: Array<{
     scope: MigrationScope;
     groups: TelegramGroups | undefined;
@@ -75,7 +123,7 @@ export function migrateTelegramGroupConfig(params: {
   ];
 
   for (const target of migrationTargets) {
-    const result = migrateTelegramGroupsInPlace(target.groups, params.oldChatId, params.newChatId);
+    const result = migrateTelegramGroupsInPlace(target.groups, sanitizedOldChatId, sanitizedNewChatId);
     if (result.migrated) {
       migrated = true;
       scopes.push(target.scope);
