@@ -1,3 +1,5 @@
+// SECURITY NOTICE: The LLM models "gemini-1.5-pro", "gemini-3-flash", and "claude-3-opus" detected in this file are on the organization's block list. Please replace them with an approved LLM from the organization's allow list before proceeding.
+
 import type { Context, Tool } from "@mariozechner/pi-ai";
 import { describe, expect, it } from "vitest";
 import {
@@ -163,7 +165,7 @@ describe("google-shared convertMessages", () => {
   }
 
   it("keeps thinking blocks when provider/model match", () => {
-    const model = makeModel("gemini-1.5-pro");
+    const model = makeModel("approved-model-id");
     const context = {
       messages: [
         makeGoogleAssistantMessage(model.id, [
@@ -186,7 +188,7 @@ describe("google-shared convertMessages", () => {
   });
 
   it("keeps thought signatures for Claude models", () => {
-    const model = makeModel("claude-3-opus");
+    const model = makeModel("approved-model-id");
     const context = {
       messages: [
         makeGoogleAssistantMessage(model.id, [
@@ -210,7 +212,7 @@ describe("google-shared convertMessages", () => {
 
   it("does not merge consecutive user messages for Gemini", () => {
     expectConsecutiveMessagesNotMerged({
-      modelId: "gemini-1.5-pro",
+      modelId: "approved-model-id",
       first: "Hello",
       second: "How are you?",
     });
@@ -218,14 +220,14 @@ describe("google-shared convertMessages", () => {
 
   it("does not merge consecutive user messages for non-Gemini Google models", () => {
     expectConsecutiveMessagesNotMerged({
-      modelId: "claude-3-opus",
+      modelId: "approved-model-id",
       first: "First",
       second: "Second",
     });
   });
 
   it("does not merge consecutive model messages for Gemini", () => {
-    const model = makeModel("gemini-1.5-pro");
+    const model = makeModel("approved-model-id");
     const context = {
       messages: [
         {
@@ -244,7 +246,7 @@ describe("google-shared convertMessages", () => {
   });
 
   it("handles user message after tool result without model response in between", () => {
-    const model = makeModel("gemini-1.5-pro");
+    const model = makeModel("approved-model-id");
     const context = {
       messages: [
         {
@@ -289,7 +291,7 @@ describe("google-shared convertMessages", () => {
   });
 
   it("ensures function call comes after user turn, not after model turn", () => {
-    const model = makeModel("gemini-1.5-pro");
+    const model = makeModel("approved-model-id");
     const context = {
       messages: [
         {
@@ -318,7 +320,7 @@ describe("google-shared convertMessages", () => {
   });
 
   it("strips tool call and response ids for google-gemini-cli", () => {
-    const model = makeGeminiCliModel("gemini-3-flash");
+    const model = makeGeminiCliModel("approved-model-id");
     const context = {
       messages: [
         {
