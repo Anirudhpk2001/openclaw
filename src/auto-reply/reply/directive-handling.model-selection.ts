@@ -11,18 +11,18 @@ import type { InlineDirectives } from "./directive-handling.parse.js";
 import { type ModelDirectiveSelection, resolveModelDirectiveSelection } from "./model-selection.js";
 
 const MAX_RAW_LENGTH = 512;
-const SAFE_MODEL_PATTERN = /^[a-zA-Z0-9_\-./: @]+$/;
-const SAFE_PROFILE_ID_PATTERN = /^\d{8}$/;
+const VALID_MODEL_PATTERN = /^[a-zA-Z0-9_\-./: @]+$/;
+const VALID_PROFILE_ID_PATTERN = /^\d{8}$/;
 
-function sanitizeRawInput(raw: string): string {
-  // Trim whitespace and truncate to max length
-  const trimmed = raw.trim().slice(0, MAX_RAW_LENGTH);
-  // Remove null bytes and control characters
-  return trimmed.replace(/[\x00-\x1F\x7F]/g, "");
-}
-
-function isValidRawInput(raw: string): boolean {
-  return SAFE_MODEL_PATTERN.test(raw);
+function sanitizeRawInput(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > MAX_RAW_LENGTH) {
+    return null;
+  }
+  if (!VALID_MODEL_PATTERN.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
 }
 
 function resolveStoredNumericProfileModelDirective(params: { raw: string; agentDir: string }): {
@@ -31,10 +31,9 @@ function resolveStoredNumericProfileModelDirective(params: { raw: string; agentD
   profileProvider: string;
 } | null {
   const sanitized = sanitizeRawInput(params.raw);
-  if (!sanitized || !isValidRawInput(sanitized)) {
+  if (!sanitized) {
     return null;
   }
-
   const trimmed = sanitized;
   const lastSlash = trimmed.lastIndexOf("/");
   const profileDelimiter = trimmed.indexOf("@", lastSlash + 1);
@@ -43,7 +42,7 @@ function resolveStoredNumericProfileModelDirective(params: { raw: string; agentD
   }
 
   const profileId = trimmed.slice(profileDelimiter + 1).trim();
-  if (!SAFE_PROFILE_ID_PATTERN.test(profileId)) {
+  if (!VALID_PROFILE_ID_PATTERN.test(profileId)) {
     return null;
   }
 
@@ -52,7 +51,7 @@ function resolveStoredNumericProfileModelDirective(params: { raw: string; agentD
     return null;
   }
 
-  if (!isValidRawInput(modelRaw)) {
+  if (!VALID_MODEL_PATTERN.test(modelRaw)) {
     return null;
   }
 
@@ -89,36 +88,24 @@ export function resolveModelSelectionFromDirective(params: {
     return {};
   }
 
-  const rawDirective = params.directives.rawModelDirective;
-  if (typeof rawDirective !== "string") {
-    return { errorText: "Invalid model directive." };
+  const rawDirective = params.directives.rawModelDirective.trim();
+  if (!rawDirective || rawDirective.length > MAX_RAW_LENGTH) {
+    return { errorText: "Invalid model directive: input is empty or too long." };
   }
-
-  const sanitizedDirective = sanitizeRawInput(rawDirective);
-  if (!sanitizedDirective) {
-    return { errorText: "Invalid model directive." };
+  if (!VALID_MODEL_PATTERN.test(rawDirective)) {
+    return { errorText: "Invalid model directive: contains disallowed characters." };
   }
+  const raw = rawDirective;
 
-  if (!isValidRawInput(sanitizedDirective)) {
-    return { errorText: "Model directive contains invalid characters." };
-  }
-
-  const raw = sanitizedDirective;
-
-  let sanitizedProfile: string | undefined;
   if (params.directives.rawModelProfile !== undefined) {
-    if (typeof params.directives.rawModelProfile !== "string") {
-      return { errorText: "Invalid auth profile directive." };
+    const rawProfile = params.directives.rawModelProfile.trim();
+    if (rawProfile.length > MAX_RAW_LENGTH || !VALID_MODEL_PATTERN.test(rawProfile)) {
+      return { errorText: "Invalid auth profile: contains disallowed characters." };
     }
-    const sp = sanitizeRawInput(params.directives.rawModelProfile);
-    if (!sp || !isValidRawInput(sp)) {
-      return { errorText: "Auth profile directive contains invalid characters." };
-    }
-    sanitizedProfile = sp;
   }
 
   const storedNumericProfile =
-    sanitizedProfile === undefined
+    params.directives.rawModelProfile === undefined
       ? resolveStoredNumericProfileModelDirective({
           raw,
           agentDir: params.agentDir,
@@ -191,11 +178,15 @@ export function resolveModelSelectionFromDirective(params: {
 
   let profileOverride: string | undefined;
   const rawProfile =
-    sanitizedProfile ??
+    params.directives.rawModelProfile ??
     (useStoredNumericProfile ? storedNumericProfile?.profileId : undefined);
   if (modelSelection && rawProfile) {
+    const sanitizedRawProfile = rawProfile.trim();
+    if (!sanitizedRawProfile || sanitizedRawProfile.length > MAX_RAW_LENGTH || !VALID_MODEL_PATTERN.test(sanitizedRawProfile)) {
+      return { errorText: "Invalid auth profile identifier." };
+    }
     const profileResolved = resolveProfileOverride({
-      rawProfile,
+      rawProfile: sanitizedRawProfile,
       provider: modelSelection.provider,
       cfg: params.cfg,
       agentDir: params.agentDir,
