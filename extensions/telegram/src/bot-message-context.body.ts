@@ -57,6 +57,28 @@ export type TelegramInboundBodyResult = {
   locationData?: NormalizedLocation;
 };
 
+const MAX_TEXT_LENGTH = 10000;
+const ALLOWED_MEDIA_CONTENT_TYPES = /^(audio|image|video)\//;
+
+function sanitizeText(input: string): string {
+  if (typeof input !== "string") return "";
+  return input.slice(0, MAX_TEXT_LENGTH).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+}
+
+function sanitizeMediaRefs(allMedia: TelegramMediaRef[]): TelegramMediaRef[] {
+  if (!Array.isArray(allMedia)) return [];
+  return allMedia.filter((media) => {
+    if (!media || typeof media !== "object") return false;
+    if (media.contentType && !ALLOWED_MEDIA_CONTENT_TYPES.test(media.contentType)) return false;
+    return true;
+  });
+}
+
+function maskSenderId(senderId: string): string {
+  if (!senderId) return "[REDACTED]";
+  return "[REDACTED]";
+}
+
 async function resolveStickerVisionSupport(params: {
   cfg: OpenClawConfig;
   agentId?: string;
@@ -102,7 +124,6 @@ export async function resolveTelegramInboundBody(params: {
     cfg,
     primaryCtx,
     msg,
-    allMedia,
     isGroup,
     chatId,
     senderId,
@@ -119,9 +140,16 @@ export async function resolveTelegramInboundBody(params: {
     historyLimit,
     logger,
   } = params;
+
+  const allMedia = sanitizeMediaRefs(params.allMedia);
+
   const botUsername = primaryCtx.me?.username?.toLowerCase();
   const mentionRegexes = buildMentionRegexes(cfg, routeAgentId);
-  const messageTextParts = getTelegramTextParts(msg);
+  const rawMessageTextParts = getTelegramTextParts(msg);
+  const messageTextParts = {
+    ...rawMessageTextParts,
+    text: sanitizeText(rawMessageTextParts.text),
+  };
   const allowForCommands = isGroup ? effectiveGroupAllow : effectiveDmAllow;
   const senderAllowedForCommands = isSenderAllowed({
     allow: allowForCommands,
@@ -156,7 +184,7 @@ export async function resolveTelegramInboundBody(params: {
 
   const locationData = extractTelegramLocation(msg);
   const locationText = locationData ? formatLocationText(locationData) : undefined;
-  const rawText = expandTextLinks(messageTextParts.text, messageTextParts.entities).trim();
+  const rawText = sanitizeText(expandTextLinks(messageTextParts.text, messageTextParts.entities).trim());
   const hasUserText = Boolean(rawText || locationText);
   let rawBody = [rawText, locationText].filter(Boolean).join("\n").trim();
   if (!rawBody) {
@@ -199,6 +227,9 @@ export async function resolveTelegramInboundBody(params: {
         cfg,
         agentDir: undefined,
       });
+      if (preflightTranscript) {
+        preflightTranscript = sanitizeText(preflightTranscript);
+      }
     } catch (err) {
       logVerbose(`telegram: audio preflight transcription failed: ${String(err)}`);
     }
@@ -235,7 +266,7 @@ export async function resolveTelegramInboundBody(params: {
       log: logVerbose,
       channel: "telegram",
       reason: "control command (unauthorized)",
-      target: senderId ?? "unknown",
+      target: maskSenderId(senderId ?? "unknown"),
     });
     return null;
   }
