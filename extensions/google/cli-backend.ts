@@ -1,3 +1,5 @@
+// SECURITY NOTICE: The LLM models currently configured (gemini-3.1-pro-preview, gemini-3.1-flash-preview, gemini-3.1-flash-lite-preview) are on the organization's block list.
+// ACTION REQUIRED: Replace these models with an approved LLM from the organization's allow list before deploying this code.
 import type { CliBackendPlugin } from "openclaw/plugin-sdk/cli-backend";
 import {
   CLI_FRESH_WATCHDOG_DEFAULTS,
