@@ -40,6 +40,40 @@ const USAGE_OAUTH_ONLY_PROVIDERS = new Set([
   "openai-codex",
 ]);
 
+function maskSenderId(senderId: string | undefined): string {
+  if (!senderId) return "<unknown>";
+  // Mask potential PII in sender IDs (could contain email, IP, etc.)
+  return senderId.replace(/[^@\s]+@[^@\s]+\.[^@\s]+/g, "[REDACTED_EMAIL]")
+    .replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, "[REDACTED_IP]")
+    .replace(/([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}/g, "[REDACTED_MAC]");
+}
+
+function sanitizeString(value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value !== "string") return undefined;
+  // Remove control characters and limit length
+  return value.replace(/[\x00-\x1F\x7F]/g, "").slice(0, 4096);
+}
+
+function sanitizeProvider(provider: unknown): string | undefined {
+  if (typeof provider !== "string") return undefined;
+  // Allow only alphanumeric, hyphens, underscores, dots
+  if (!/^[a-zA-Z0-9._-]{1,128}$/.test(provider)) return undefined;
+  return provider;
+}
+
+function sanitizeModel(model: unknown): string | undefined {
+  if (typeof model !== "string") return undefined;
+  // Allow only alphanumeric, hyphens, underscores, dots, slashes, colons
+  if (!/^[a-zA-Z0-9._/:@-]{1,256}$/.test(model)) return undefined;
+  return model;
+}
+
+function sanitizeContextTokens(contextTokens: unknown): number {
+  if (typeof contextTokens !== "number" || !isFinite(contextTokens) || contextTokens < 0) return 0;
+  return Math.floor(contextTokens);
+}
+
 function shouldLoadUsageSummary(params: {
   provider?: string;
   selectedModelAuth?: string;
@@ -83,9 +117,6 @@ export async function buildStatusReply(params: {
     parentSessionKey,
     sessionScope,
     storePath,
-    provider,
-    model,
-    contextTokens,
     resolvedThinkLevel,
     resolvedFastMode,
     resolvedVerboseLevel,
@@ -95,12 +126,32 @@ export async function buildStatusReply(params: {
     isGroup,
     defaultGroupActivation,
   } = params;
+
+  // Sanitize and validate inputs
+  const provider = sanitizeProvider(params.provider) ?? "";
+  const model = sanitizeModel(params.model) ?? "";
+  const contextTokens = sanitizeContextTokens(params.contextTokens);
+
   if (!command.isAuthorizedSender) {
-    logVerbose(`Ignoring /status from unauthorized sender: ${command.senderId || "<unknown>"}`);
+    logVerbose(`Ignoring /status from unauthorized sender: ${maskSenderId(command.senderId)}`);
     return undefined;
   }
-  const statusAgentId = sessionKey
-    ? resolveSessionAgentId({ sessionKey, config: cfg })
+
+  // Validate sessionKey
+  const sanitizedSessionKey = sanitizeString(sessionKey);
+  if (sessionKey && !sanitizedSessionKey) {
+    logVerbose("Ignoring /status with invalid sessionKey");
+    return undefined;
+  }
+
+  // Validate provider and model
+  if (!provider || !model) {
+    logVerbose("Ignoring /status with invalid provider or model");
+    return undefined;
+  }
+
+  const statusAgentId = sanitizedSessionKey
+    ? resolveSessionAgentId({ sessionKey: sanitizedSessionKey, config: cfg })
     : resolveDefaultAgentId(cfg);
   const statusAgentDir = resolveAgentDir(cfg, statusAgentId);
   const modelRefs = resolveSelectedAndActiveModel({
@@ -177,16 +228,16 @@ export async function buildStatusReply(params: {
     channel: command.channel,
     sessionEntry,
   });
-  const queueKey = sessionKey ?? sessionEntry?.sessionId;
+  const queueKey = sanitizedSessionKey ?? sessionEntry?.sessionId;
   const queueDepth = queueKey ? getFollowupQueueDepth(queueKey) : 0;
   const queueOverrides = Boolean(
     sessionEntry?.queueDebounceMs ?? sessionEntry?.queueCap ?? sessionEntry?.queueDrop,
   );
 
   let subagentsLine: string | undefined;
-  if (sessionKey) {
+  if (sanitizedSessionKey) {
     const { mainKey, alias } = resolveMainSessionAlias(cfg);
-    const requesterKey = resolveInternalSessionKey({ key: sessionKey, alias, mainKey });
+    const requesterKey = resolveInternalSessionKey({ key: sanitizedSessionKey, alias, mainKey });
     const runs = listControlledSubagentRuns(requesterKey);
     const verboseEnabled = resolvedVerboseLevel && resolvedVerboseLevel !== "off";
     if (runs.length > 0) {
@@ -239,7 +290,7 @@ export async function buildStatusReply(params: {
         ? agentDefaults.contextTokens
         : undefined,
     sessionEntry,
-    sessionKey,
+    sessionKey: sanitizedSessionKey ?? sessionKey,
     parentSessionKey,
     sessionScope,
     sessionStorePath: storePath,
