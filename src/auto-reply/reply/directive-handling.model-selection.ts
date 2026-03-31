@@ -10,12 +10,32 @@ import { resolveProfileOverride } from "./directive-handling.auth-profile.js";
 import type { InlineDirectives } from "./directive-handling.parse.js";
 import { type ModelDirectiveSelection, resolveModelDirectiveSelection } from "./model-selection.js";
 
+const MAX_RAW_LENGTH = 512;
+const SAFE_MODEL_PATTERN = /^[a-zA-Z0-9_\-./: @]+$/;
+const SAFE_PROFILE_ID_PATTERN = /^\d{8}$/;
+
+function sanitizeRawInput(raw: string): string {
+  // Trim whitespace and truncate to max length
+  const trimmed = raw.trim().slice(0, MAX_RAW_LENGTH);
+  // Remove null bytes and control characters
+  return trimmed.replace(/[\x00-\x1F\x7F]/g, "");
+}
+
+function isValidRawInput(raw: string): boolean {
+  return SAFE_MODEL_PATTERN.test(raw);
+}
+
 function resolveStoredNumericProfileModelDirective(params: { raw: string; agentDir: string }): {
   modelRaw: string;
   profileId: string;
   profileProvider: string;
 } | null {
-  const trimmed = params.raw.trim();
+  const sanitized = sanitizeRawInput(params.raw);
+  if (!sanitized || !isValidRawInput(sanitized)) {
+    return null;
+  }
+
+  const trimmed = sanitized;
   const lastSlash = trimmed.lastIndexOf("/");
   const profileDelimiter = trimmed.indexOf("@", lastSlash + 1);
   if (profileDelimiter <= 0) {
@@ -23,12 +43,16 @@ function resolveStoredNumericProfileModelDirective(params: { raw: string; agentD
   }
 
   const profileId = trimmed.slice(profileDelimiter + 1).trim();
-  if (!/^\d{8}$/.test(profileId)) {
+  if (!SAFE_PROFILE_ID_PATTERN.test(profileId)) {
     return null;
   }
 
   const modelRaw = trimmed.slice(0, profileDelimiter).trim();
   if (!modelRaw) {
+    return null;
+  }
+
+  if (!isValidRawInput(modelRaw)) {
     return null;
   }
 
@@ -65,9 +89,36 @@ export function resolveModelSelectionFromDirective(params: {
     return {};
   }
 
-  const raw = params.directives.rawModelDirective.trim();
+  const rawDirective = params.directives.rawModelDirective;
+  if (typeof rawDirective !== "string") {
+    return { errorText: "Invalid model directive." };
+  }
+
+  const sanitizedDirective = sanitizeRawInput(rawDirective);
+  if (!sanitizedDirective) {
+    return { errorText: "Invalid model directive." };
+  }
+
+  if (!isValidRawInput(sanitizedDirective)) {
+    return { errorText: "Model directive contains invalid characters." };
+  }
+
+  const raw = sanitizedDirective;
+
+  let sanitizedProfile: string | undefined;
+  if (params.directives.rawModelProfile !== undefined) {
+    if (typeof params.directives.rawModelProfile !== "string") {
+      return { errorText: "Invalid auth profile directive." };
+    }
+    const sp = sanitizeRawInput(params.directives.rawModelProfile);
+    if (!sp || !isValidRawInput(sp)) {
+      return { errorText: "Auth profile directive contains invalid characters." };
+    }
+    sanitizedProfile = sp;
+  }
+
   const storedNumericProfile =
-    params.directives.rawModelProfile === undefined
+    sanitizedProfile === undefined
       ? resolveStoredNumericProfileModelDirective({
           raw,
           agentDir: params.agentDir,
@@ -140,7 +191,7 @@ export function resolveModelSelectionFromDirective(params: {
 
   let profileOverride: string | undefined;
   const rawProfile =
-    params.directives.rawModelProfile ??
+    sanitizedProfile ??
     (useStoredNumericProfile ? storedNumericProfile?.profileId : undefined);
   if (modelSelection && rawProfile) {
     const profileResolved = resolveProfileOverride({
