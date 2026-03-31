@@ -40,38 +40,40 @@ const USAGE_OAUTH_ONLY_PROVIDERS = new Set([
   "openai-codex",
 ]);
 
-function maskSenderId(senderId: string | undefined): string {
-  if (!senderId) return "<unknown>";
-  // Mask potential PII in sender IDs (could contain email, IP, etc.)
-  return senderId.replace(/[^@\s]+@[^@\s]+\.[^@\s]+/g, "[REDACTED_EMAIL]")
-    .replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, "[REDACTED_IP]")
-    .replace(/([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}/g, "[REDACTED_MAC]");
+function maskPII(value: string): string {
+  // Mask IP addresses (IPv4)
+  value = value.replace(/\b(\d{1,3}\.){3}\d{1,3}\b/g, "[REDACTED-IP]");
+  // Mask MAC addresses
+  value = value.replace(/\b([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}\b/g, "[REDACTED-MAC]");
+  // Mask email addresses
+  value = value.replace(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g, "[REDACTED-EMAIL]");
+  return value;
 }
 
-function sanitizeString(value: unknown): string | undefined {
-  if (value === null || value === undefined) return undefined;
-  if (typeof value !== "string") return undefined;
-  // Remove control characters and limit length
-  return value.replace(/[\x00-\x1F\x7F]/g, "").slice(0, 4096);
+function sanitizeString(value: unknown): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  // Remove null bytes and control characters
+  return value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").trim();
 }
 
-function sanitizeProvider(provider: unknown): string | undefined {
-  if (typeof provider !== "string") return undefined;
+function sanitizeProvider(value: unknown): string {
+  const str = sanitizeString(value);
   // Allow only alphanumeric, hyphens, underscores, dots
-  if (!/^[a-zA-Z0-9._-]{1,128}$/.test(provider)) return undefined;
-  return provider;
+  return str.replace(/[^a-zA-Z0-9\-_.]/g, "");
 }
 
-function sanitizeModel(model: unknown): string | undefined {
-  if (typeof model !== "string") return undefined;
+function sanitizeModel(value: unknown): string {
+  const str = sanitizeString(value);
   // Allow only alphanumeric, hyphens, underscores, dots, slashes, colons
-  if (!/^[a-zA-Z0-9._/:@-]{1,256}$/.test(model)) return undefined;
-  return model;
+  return str.replace(/[^a-zA-Z0-9\-_./: ]/g, "");
 }
 
-function sanitizeContextTokens(contextTokens: unknown): number {
-  if (typeof contextTokens !== "number" || !isFinite(contextTokens) || contextTokens < 0) return 0;
-  return Math.floor(contextTokens);
+function sanitizeSessionKey(value: unknown): string {
+  const str = sanitizeString(value);
+  // Allow only alphanumeric, hyphens, underscores, dots, colons
+  return str.replace(/[^a-zA-Z0-9\-_.:]/g, "");
 }
 
 function shouldLoadUsageSummary(params: {
@@ -113,10 +115,9 @@ export async function buildStatusReply(params: {
     cfg,
     command,
     sessionEntry,
-    sessionKey,
-    parentSessionKey,
     sessionScope,
     storePath,
+    contextTokens,
     resolvedThinkLevel,
     resolvedFastMode,
     resolvedVerboseLevel,
@@ -127,31 +128,21 @@ export async function buildStatusReply(params: {
     defaultGroupActivation,
   } = params;
 
-  // Sanitize and validate inputs
-  const provider = sanitizeProvider(params.provider) ?? "";
-  const model = sanitizeModel(params.model) ?? "";
-  const contextTokens = sanitizeContextTokens(params.contextTokens);
+  // Sanitize inputs
+  const sessionKey = sanitizeSessionKey(params.sessionKey);
+  const parentSessionKey = params.parentSessionKey !== undefined
+    ? sanitizeSessionKey(params.parentSessionKey)
+    : undefined;
+  const provider = sanitizeProvider(params.provider);
+  const model = sanitizeModel(params.model);
 
   if (!command.isAuthorizedSender) {
-    logVerbose(`Ignoring /status from unauthorized sender: ${maskSenderId(command.senderId)}`);
+    const maskedSenderId = command.senderId ? maskPII(sanitizeString(command.senderId)) : "<unknown>";
+    logVerbose(`Ignoring /status from unauthorized sender: ${maskedSenderId}`);
     return undefined;
   }
-
-  // Validate sessionKey
-  const sanitizedSessionKey = sanitizeString(sessionKey);
-  if (sessionKey && !sanitizedSessionKey) {
-    logVerbose("Ignoring /status with invalid sessionKey");
-    return undefined;
-  }
-
-  // Validate provider and model
-  if (!provider || !model) {
-    logVerbose("Ignoring /status with invalid provider or model");
-    return undefined;
-  }
-
-  const statusAgentId = sanitizedSessionKey
-    ? resolveSessionAgentId({ sessionKey: sanitizedSessionKey, config: cfg })
+  const statusAgentId = sessionKey
+    ? resolveSessionAgentId({ sessionKey, config: cfg })
     : resolveDefaultAgentId(cfg);
   const statusAgentDir = resolveAgentDir(cfg, statusAgentId);
   const modelRefs = resolveSelectedAndActiveModel({
@@ -228,16 +219,16 @@ export async function buildStatusReply(params: {
     channel: command.channel,
     sessionEntry,
   });
-  const queueKey = sanitizedSessionKey ?? sessionEntry?.sessionId;
+  const queueKey = sessionKey ?? sessionEntry?.sessionId;
   const queueDepth = queueKey ? getFollowupQueueDepth(queueKey) : 0;
   const queueOverrides = Boolean(
     sessionEntry?.queueDebounceMs ?? sessionEntry?.queueCap ?? sessionEntry?.queueDrop,
   );
 
   let subagentsLine: string | undefined;
-  if (sanitizedSessionKey) {
+  if (sessionKey) {
     const { mainKey, alias } = resolveMainSessionAlias(cfg);
-    const requesterKey = resolveInternalSessionKey({ key: sanitizedSessionKey, alias, mainKey });
+    const requesterKey = resolveInternalSessionKey({ key: sessionKey, alias, mainKey });
     const runs = listControlledSubagentRuns(requesterKey);
     const verboseEnabled = resolvedVerboseLevel && resolvedVerboseLevel !== "off";
     if (runs.length > 0) {
@@ -290,7 +281,7 @@ export async function buildStatusReply(params: {
         ? agentDefaults.contextTokens
         : undefined,
     sessionEntry,
-    sessionKey: sanitizedSessionKey ?? sessionKey,
+    sessionKey,
     parentSessionKey,
     sessionScope,
     sessionStorePath: storePath,
