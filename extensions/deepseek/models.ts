@@ -11,6 +11,15 @@ const DEEPSEEK_V3_2_COST = {
   cacheWrite: 0,
 };
 
+// DeepSeek V3-0324 pricing (per 1M tokens)
+// Model snapshot released 2025-03-24; higher output cost reflects improved capability
+const DEEPSEEK_V3_0324_COST = {
+  input: 0.27,
+  output: 1.10,
+  cacheRead: 0.07,
+  cacheWrite: 0,
+};
+
 export const DEEPSEEK_MODEL_CATALOG: ModelDefinitionConfig[] = [
   {
     id: "deepseek-chat",
@@ -20,6 +29,16 @@ export const DEEPSEEK_MODEL_CATALOG: ModelDefinitionConfig[] = [
     contextWindow: 131072,
     maxTokens: 8192,
     cost: DEEPSEEK_V3_2_COST,
+    compat: { supportsUsageInStreaming: true },
+  },
+  {
+    id: "deepseek-v3-0324",
+    name: "DeepSeek V3 (0324)",
+    reasoning: false,
+    input: ["text"],
+    contextWindow: 131072,
+    maxTokens: 8192,
+    cost: DEEPSEEK_V3_0324_COST,
     compat: { supportsUsageInStreaming: true },
   },
   {
