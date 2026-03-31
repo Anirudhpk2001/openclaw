@@ -30,6 +30,22 @@ import type { TypingController } from "./typing.js";
 
 let builtinSlashCommands: Set<string> | null = null;
 
+function maskPII(value: string): string {
+  return value.replace(/./g, "*").slice(0, 4) + "****";
+}
+
+function sanitizeInput(input: string): string {
+  if (typeof input !== "string") {
+    return "";
+  }
+  // Remove null bytes and control characters except common whitespace
+  return input.replace(/\0/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+}
+
+function validateCommandName(name: string): boolean {
+  return /^[a-zA-Z0-9_-]{1,64}$/.test(name);
+}
+
 function getBuiltinSlashCommands(): Set<string> {
   if (builtinSlashCommands) {
     return builtinSlashCommands;
@@ -55,7 +71,13 @@ function resolveSlashCommandName(commandBodyNormalized: string): string | null {
   }
   const match = trimmed.match(/^\/([^\s:]+)(?::|\s|$)/);
   const name = match?.[1]?.trim().toLowerCase() ?? "";
-  return name ? name : null;
+  if (!name) {
+    return null;
+  }
+  if (!validateCommandName(name)) {
+    return null;
+  }
+  return name;
 }
 
 function expandBundleCommandPromptTemplate(template: string, args?: string): string {
@@ -176,9 +198,9 @@ export async function handleInlineActions(params: {
   } = params;
 
   let directives = initialDirectives;
-  let cleanedBody = initialCleanedBody;
+  let cleanedBody = sanitizeInput(initialCleanedBody);
 
-  const slashCommandName = resolveSlashCommandName(command.commandBodyNormalized);
+  const slashCommandName = resolveSlashCommandName(sanitizeInput(command.commandBodyNormalized));
   const shouldLoadSkillCommands =
     allowTextCommands &&
     slashCommandName !== null &&
@@ -198,14 +220,14 @@ export async function handleInlineActions(params: {
   const skillInvocation =
     allowTextCommands && skillCommands.length > 0
       ? resolveSkillCommandInvocation({
-          commandBodyNormalized: command.commandBodyNormalized,
+          commandBodyNormalized: sanitizeInput(command.commandBodyNormalized),
           skillCommands,
         })
       : null;
   if (skillInvocation) {
     if (!command.isAuthorizedSender) {
       logVerbose(
-        `Ignoring /${skillInvocation.command.name} from unauthorized sender: ${command.senderId || "<unknown>"}`,
+        `Ignoring /${skillInvocation.command.name} from unauthorized sender: ${maskPII(command.senderId || "<unknown>")}`,
       );
       typing.cleanup();
       return { kind: "reply", reply: undefined };
@@ -213,7 +235,7 @@ export async function handleInlineActions(params: {
 
     const dispatch = skillInvocation.command.dispatch;
     if (dispatch?.kind === "tool") {
-      const rawArgs = (skillInvocation.args ?? "").trim();
+      const rawArgs = sanitizeInput((skillInvocation.args ?? "").trim());
       const channel =
         resolveGatewayMessageChannel(ctx.Surface) ??
         resolveGatewayMessageChannel(ctx.Provider) ??
@@ -234,18 +256,24 @@ export async function handleInlineActions(params: {
       });
       const authorizedTools = applyOwnerOnlyToolPolicy(tools, command.senderIsOwner);
 
-      const tool = authorizedTools.find((candidate) => candidate.name === dispatch.toolName);
+      const sanitizedToolName = sanitizeInput(dispatch.toolName);
+      if (!validateCommandName(sanitizedToolName)) {
+        typing.cleanup();
+        return { kind: "reply", reply: { text: `❌ Invalid tool name.` } };
+      }
+
+      const tool = authorizedTools.find((candidate) => candidate.name === sanitizedToolName);
       if (!tool) {
         typing.cleanup();
-        return { kind: "reply", reply: { text: `❌ Tool not available: ${dispatch.toolName}` } };
+        return { kind: "reply", reply: { text: `❌ Tool not available: ${sanitizedToolName}` } };
       }
 
       const toolCallId = `cmd_${generateSecureToken(8)}`;
       try {
         const result = await tool.execute(toolCallId, {
           command: rawArgs,
-          commandName: skillInvocation.command.name,
-          skillName: skillInvocation.command.skillName,
+          commandName: sanitizeInput(skillInvocation.command.name),
+          skillName: sanitizeInput(skillInvocation.command.skillName),
           // oxlint-disable-next-line typescript/no-explicit-any
         } as any);
         const text = extractTextFromToolResult(result) ?? "✅ Done.";
@@ -261,11 +289,11 @@ export async function handleInlineActions(params: {
     const rewrittenBody = skillInvocation.command.promptTemplate
       ? expandBundleCommandPromptTemplate(
           skillInvocation.command.promptTemplate,
-          skillInvocation.args,
+          skillInvocation.args ? sanitizeInput(skillInvocation.args) : skillInvocation.args,
         )
       : [
-          `Use the "${skillInvocation.command.skillName}" skill for this request.`,
-          skillInvocation.args ? `User input:\n${skillInvocation.args}` : null,
+          `Use the "${sanitizeInput(skillInvocation.command.skillName)}" skill for this request.`,
+          skillInvocation.args ? `User input:\n${sanitizeInput(skillInvocation.args)}` : null,
         ]
           .filter((entry): entry is string => Boolean(entry))
           .join("\n\n");
@@ -287,7 +315,7 @@ export async function handleInlineActions(params: {
     await opts.onBlockReply(reply);
   };
 
-  const isStopLikeInbound = isAbortRequestText(command.rawBodyNormalized);
+  const isStopLikeInbound = isAbortRequestText(sanitizeInput(command.rawBodyNormalized));
   if (!isStopLikeInbound && sessionEntry) {
     const cutoff = readAbortCutoffFromSessionEntry(sessionEntry);
     const incoming = resolveAbortCutoffFromContext(ctx);
@@ -320,7 +348,7 @@ export async function handleInlineActions(params: {
       ? extractInlineSimpleCommand(cleanedBody)
       : null;
   if (inlineCommand) {
-    cleanedBody = inlineCommand.cleaned;
+    cleanedBody = sanitizeInput(inlineCommand.cleaned);
     sessionCtx.Body = cleanedBody;
     sessionCtx.BodyForAgent = cleanedBody;
     sessionCtx.BodyStripped = cleanedBody;
@@ -405,8 +433,8 @@ export async function handleInlineActions(params: {
   if (inlineCommand) {
     const inlineCommandContext = {
       ...command,
-      rawBodyNormalized: inlineCommand.command,
-      commandBodyNormalized: inlineCommand.command,
+      rawBodyNormalized: sanitizeInput(inlineCommand.command),
+      commandBodyNormalized: sanitizeInput(inlineCommand.command),
     };
     const inlineResult = await runCommands(inlineCommandContext);
     if (inlineResult.reply) {
