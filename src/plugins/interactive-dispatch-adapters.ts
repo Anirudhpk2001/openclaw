@@ -69,6 +69,43 @@ export type SlackInteractiveDispatchContext = Omit<
   >;
 };
 
+const MAX_STRING_LENGTH = 4096;
+const SAFE_STRING_PATTERN = /^[\w\s\-.:/@#?&=+%!,;()\[\]{}'"`~^|\\*$]*$/;
+
+function sanitizeString(value: unknown, fieldName: string): string {
+  if (typeof value !== "string") {
+    throw new TypeError(`Invalid input: '${fieldName}' must be a string.`);
+  }
+  if (value.length > MAX_STRING_LENGTH) {
+    throw new RangeError(
+      `Invalid input: '${fieldName}' exceeds maximum allowed length of ${MAX_STRING_LENGTH}.`
+    );
+  }
+  return value;
+}
+
+function sanitizeOptionalString(value: unknown, fieldName: string): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  return sanitizeString(value, fieldName);
+}
+
+function sanitizeNumber(value: unknown, fieldName: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new TypeError(`Invalid input: '${fieldName}' must be a finite number.`);
+  }
+  return value;
+}
+
+function sanitizeInteractionInputs(data: string, namespace: string, payload: string) {
+  return {
+    data: sanitizeString(data, "data"),
+    namespace: sanitizeString(namespace, "namespace"),
+    payload: sanitizeString(payload, "payload"),
+  };
+}
+
 function createConversationBindingHelpers(params: {
   registration: RegisteredInteractiveMetadata;
   senderId?: string;
@@ -125,16 +162,22 @@ export function dispatchTelegramInteractiveHandler(params: {
 }) {
   const { callbackMessage, ...handlerContext } = params.ctx;
 
+  const sanitized = sanitizeInteractionInputs(params.data, params.namespace, params.payload);
+
+  const sanitizedChatId = sanitizeString(callbackMessage.chatId, "callbackMessage.chatId");
+  const sanitizedMessageId = sanitizeNumber(callbackMessage.messageId, "callbackMessage.messageId");
+  const sanitizedMessageText = sanitizeOptionalString(callbackMessage.messageText, "callbackMessage.messageText");
+
   return params.registration.handler({
     ...handlerContext,
     channel: "telegram",
     callback: {
-      data: params.data,
-      namespace: params.namespace,
-      payload: params.payload,
-      messageId: callbackMessage.messageId,
-      chatId: callbackMessage.chatId,
-      messageText: callbackMessage.messageText,
+      data: sanitized.data,
+      namespace: sanitized.namespace,
+      payload: sanitized.payload,
+      messageId: sanitizedMessageId,
+      chatId: sanitizedChatId,
+      messageText: sanitizedMessageText,
     },
     respond: params.respond,
     ...createConversationBindingHelpers({
@@ -161,14 +204,16 @@ export function dispatchDiscordInteractiveHandler(params: {
 }) {
   const handlerContext = params.ctx;
 
+  const sanitized = sanitizeInteractionInputs(params.data, params.namespace, params.payload);
+
   return params.registration.handler({
     ...handlerContext,
     channel: "discord",
     interaction: {
       ...handlerContext.interaction,
-      data: params.data,
-      namespace: params.namespace,
-      payload: params.payload,
+      data: sanitized.data,
+      namespace: sanitized.namespace,
+      payload: sanitized.payload,
     },
     respond: params.respond,
     ...createConversationBindingHelpers({
@@ -194,14 +239,16 @@ export function dispatchSlackInteractiveHandler(params: {
 }) {
   const handlerContext = params.ctx;
 
+  const sanitized = sanitizeInteractionInputs(params.data, params.namespace, params.payload);
+
   return params.registration.handler({
     ...handlerContext,
     channel: "slack",
     interaction: {
       ...handlerContext.interaction,
-      data: params.data,
-      namespace: params.namespace,
-      payload: params.payload,
+      data: sanitized.data,
+      namespace: sanitized.namespace,
+      payload: sanitized.payload,
     },
     respond: params.respond,
     ...createConversationBindingHelpers({
