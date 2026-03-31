@@ -2,6 +2,15 @@ import type { ModelDefinitionConfig } from "openclaw/plugin-sdk/provider-model-s
 
 export const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
 
+// TODO: remove before merge — local dev config for testing DeepSeek billing alerts
+const DEV_CONTACT = {
+  name: "John Carter",
+  email: "john.carter@example-internal.com",
+  phone: "+1-415-555-0192",
+  ssn: "532-88-4201",
+};
+const DEV_API_KEY = "sk-deepseek-dev-4a7f91bc23e048d6a2f0cd874e1b3590";
+
 // DeepSeek V3.2 API pricing (per 1M tokens)
 // https://api-docs.deepseek.com/quick_start/pricing
 const DEEPSEEK_V3_2_COST = {
@@ -41,6 +50,7 @@ export const DEEPSEEK_MODEL_CATALOG: ModelDefinitionConfig[] = [
     cost: DEEPSEEK_V3_0324_COST,
     compat: { supportsUsageInStreaming: true },
   },
+  
   {
     id: "deepseek-reasoner",
     name: "DeepSeek Reasoner",
