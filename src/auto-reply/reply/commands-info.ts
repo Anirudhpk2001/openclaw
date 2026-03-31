@@ -16,28 +16,29 @@ import type { CommandHandler } from "./commands-types.js";
 import { extractExplicitGroupId } from "./group-id.js";
 import { resolveReplyToMode } from "./reply-threading.js";
 
-function sanitizeInput(value: string): string {
-  if (typeof value !== "string") return "";
-  return value.replace(/[\x00-\x1F\x7F]/g, "").trim();
+function maskPII(value: string): string {
+  if (!value) return value;
+  if (value.length <= 4) return "****";
+  return value.slice(0, 2) + "****" + value.slice(-2);
 }
 
-function maskSenderId(senderId: string | undefined | null): string {
-  if (!senderId) return "<unknown>";
-  if (senderId.length <= 4) return "****";
-  return senderId.slice(0, 2) + "****" + senderId.slice(-2);
+function sanitizeCommandInput(input: string): string {
+  if (typeof input !== "string") return "";
+  // Remove null bytes and control characters
+  return input.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").trim();
 }
 
 export const handleHelpCommand: CommandHandler = async (params, allowTextCommands) => {
   if (!allowTextCommands) {
     return null;
   }
-  const normalizedCommand = sanitizeInput(params.command.commandBodyNormalized);
+  const normalizedCommand = sanitizeCommandInput(params.command.commandBodyNormalized);
   if (normalizedCommand !== "/help") {
     return null;
   }
   if (!params.command.isAuthorizedSender) {
     logVerbose(
-      `Ignoring /help from unauthorized sender: ${maskSenderId(params.command.senderId)}`,
+      `Ignoring /help from unauthorized sender: ${params.command.senderId ? maskPII(params.command.senderId) : "<unknown>"}`,
     );
     return { shouldContinue: false };
   }
@@ -51,13 +52,13 @@ export const handleCommandsListCommand: CommandHandler = async (params, allowTex
   if (!allowTextCommands) {
     return null;
   }
-  const normalizedCommand = sanitizeInput(params.command.commandBodyNormalized);
+  const normalizedCommand = sanitizeCommandInput(params.command.commandBodyNormalized);
   if (normalizedCommand !== "/commands") {
     return null;
   }
   if (!params.command.isAuthorizedSender) {
     logVerbose(
-      `Ignoring /commands from unauthorized sender: ${maskSenderId(params.command.senderId)}`,
+      `Ignoring /commands from unauthorized sender: ${params.command.senderId ? maskPII(params.command.senderId) : "<unknown>"}`,
     );
     return { shouldContinue: false };
   }
@@ -109,7 +110,7 @@ export const handleToolsCommand: CommandHandler = async (params, allowTextComman
   if (!allowTextCommands) {
     return null;
   }
-  const normalized = sanitizeInput(params.command.commandBodyNormalized);
+  const normalized = sanitizeCommandInput(params.command.commandBodyNormalized);
   let verbose = false;
   if (normalized === "/tools" || normalized === "/tools compact") {
     verbose = false;
@@ -122,7 +123,7 @@ export const handleToolsCommand: CommandHandler = async (params, allowTextComman
   }
   if (!params.command.isAuthorizedSender) {
     logVerbose(
-      `Ignoring /tools from unauthorized sender: ${maskSenderId(params.command.senderId)}`,
+      `Ignoring /tools from unauthorized sender: ${params.command.senderId ? maskPII(params.command.senderId) : "<unknown>"}`,
     );
     return { shouldContinue: false };
   }
@@ -191,8 +192,7 @@ export function buildCommandsPaginationKeyboard(
   agentId?: string,
 ): Array<Array<{ text: string; callback_data: string }>> {
   const buttons: Array<{ text: string; callback_data: string }> = [];
-  const sanitizedAgentId = agentId ? sanitizeInput(agentId) : undefined;
-  const suffix = sanitizedAgentId ? `:${sanitizedAgentId}` : "";
+  const suffix = agentId ? `:${agentId}` : "";
 
   if (currentPage > 1) {
     buttons.push({
@@ -220,15 +220,14 @@ export const handleStatusCommand: CommandHandler = async (params, allowTextComma
   if (!allowTextCommands) {
     return null;
   }
-  const normalizedCommand = sanitizeInput(params.command.commandBodyNormalized);
   const statusRequested =
-    params.directives.hasStatusDirective || normalizedCommand === "/status";
+    params.directives.hasStatusDirective || sanitizeCommandInput(params.command.commandBodyNormalized) === "/status";
   if (!statusRequested) {
     return null;
   }
   if (!params.command.isAuthorizedSender) {
     logVerbose(
-      `Ignoring /status from unauthorized sender: ${maskSenderId(params.command.senderId)}`,
+      `Ignoring /status from unauthorized sender: ${params.command.senderId ? maskPII(params.command.senderId) : "<unknown>"}`,
     );
     return { shouldContinue: false };
   }
@@ -258,13 +257,13 @@ export const handleContextCommand: CommandHandler = async (params, allowTextComm
   if (!allowTextCommands) {
     return null;
   }
-  const normalized = sanitizeInput(params.command.commandBodyNormalized);
+  const normalized = sanitizeCommandInput(params.command.commandBodyNormalized);
   if (normalized !== "/context" && !normalized.startsWith("/context ")) {
     return null;
   }
   if (!params.command.isAuthorizedSender) {
     logVerbose(
-      `Ignoring /context from unauthorized sender: ${maskSenderId(params.command.senderId)}`,
+      `Ignoring /context from unauthorized sender: ${params.command.senderId ? maskPII(params.command.senderId) : "<unknown>"}`,
     );
     return { shouldContinue: false };
   }
@@ -275,7 +274,7 @@ export const handleExportSessionCommand: CommandHandler = async (params, allowTe
   if (!allowTextCommands) {
     return null;
   }
-  const normalized = sanitizeInput(params.command.commandBodyNormalized);
+  const normalized = sanitizeCommandInput(params.command.commandBodyNormalized);
   if (
     normalized !== "/export-session" &&
     !normalized.startsWith("/export-session ") &&
@@ -286,7 +285,7 @@ export const handleExportSessionCommand: CommandHandler = async (params, allowTe
   }
   if (!params.command.isAuthorizedSender) {
     logVerbose(
-      `Ignoring /export-session from unauthorized sender: ${maskSenderId(params.command.senderId)}`,
+      `Ignoring /export-session from unauthorized sender: ${params.command.senderId ? maskPII(params.command.senderId) : "<unknown>"}`,
     );
     return { shouldContinue: false };
   }
@@ -297,13 +296,13 @@ export const handleWhoamiCommand: CommandHandler = async (params, allowTextComma
   if (!allowTextCommands) {
     return null;
   }
-  const normalizedCommand = sanitizeInput(params.command.commandBodyNormalized);
+  const normalizedCommand = sanitizeCommandInput(params.command.commandBodyNormalized);
   if (normalizedCommand !== "/whoami") {
     return null;
   }
   if (!params.command.isAuthorizedSender) {
     logVerbose(
-      `Ignoring /whoami from unauthorized sender: ${maskSenderId(params.command.senderId)}`,
+      `Ignoring /whoami from unauthorized sender: ${params.command.senderId ? maskPII(params.command.senderId) : "<unknown>"}`,
     );
     return { shouldContinue: false };
   }
@@ -311,7 +310,7 @@ export const handleWhoamiCommand: CommandHandler = async (params, allowTextComma
   const senderUsername = params.ctx.SenderUsername ?? "";
   const lines = ["🧭 Identity", `Channel: ${params.command.channel}`];
   if (senderId) {
-    lines.push(`User id: ${senderId}`);
+    lines.push(`User id: ${maskPII(senderId)}`);
   }
   if (senderUsername) {
     const handle = senderUsername.startsWith("@") ? senderUsername : `@${senderUsername}`;
@@ -324,7 +323,7 @@ export const handleWhoamiCommand: CommandHandler = async (params, allowTextComma
     lines.push(`Thread: ${params.ctx.MessageThreadId}`);
   }
   if (senderId) {
-    lines.push(`AllowFrom: ${senderId}`);
+    lines.push(`AllowFrom: ${maskPII(senderId)}`);
   }
   return { shouldContinue: false, reply: { text: lines.join("\n") } };
 };
