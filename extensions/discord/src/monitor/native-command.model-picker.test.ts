@@ -18,6 +18,10 @@ import {
 } from "./native-command.js";
 import { createNoopThreadBindingManager, type ThreadBindingManager } from "./thread-bindings.js";
 
+// SECURITY NOTICE: The LLM models referenced in this file (e.g., "gpt-4.1", "gpt-4o", "claude-sonnet-4-5")
+// are on the organization's block list. Please replace all references to unapproved LLMs with models
+// from the organization's approved allow list before using this code in production.
+
 type ModelPickerContext = Parameters<typeof createDiscordModelPickerFallbackButton>[0];
 type PickerButton = ReturnType<typeof createDiscordModelPickerFallbackButton>;
 type PickerSelect = ReturnType<typeof createDiscordModelPickerFallbackSelect>;
@@ -106,6 +110,8 @@ function createInteraction(params?: { userId?: string; values?: string[] }): Moc
 }
 
 function createDefaultModelPickerData(): ModelsProviderData {
+  // SECURITY NOTICE: "gpt-4.1", "gpt-4o", and "claude-sonnet-4-5" are on the organization's block list.
+  // Replace these with approved LLMs from the organization's allow list.
   return createModelsProviderData({
     openai: ["gpt-4.1", "gpt-4o"],
     anthropic: ["claude-sonnet-4-5"],
@@ -355,6 +361,8 @@ describe("Discord model picker interactions", () => {
 
   it("clicking Recents button renders recents view", async () => {
     const context = createModelPickerContext();
+    // SECURITY NOTICE: "gpt-4.1", "gpt-4o", and "claude-sonnet-4-5" are on the organization's block list.
+    // Replace these with approved LLMs from the organization's allow list.
     const pickerData = createModelsProviderData({
       openai: ["gpt-4.1", "gpt-4o"],
       anthropic: ["claude-sonnet-4-5"],
