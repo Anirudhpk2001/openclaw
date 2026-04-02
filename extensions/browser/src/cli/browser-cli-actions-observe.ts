@@ -10,6 +10,44 @@ function runBrowserObserve(action: () => Promise<void>) {
   });
 }
 
+const ALLOWED_CONSOLE_LEVELS = new Set(["error", "warn", "info"]);
+
+function sanitizeString(value: unknown, maxLength = 1024): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const str = String(value).trim();
+  if (str.length === 0) return undefined;
+  return str.slice(0, maxLength);
+}
+
+function sanitizeLevel(level: unknown): string | undefined {
+  const sanitized = sanitizeString(level);
+  if (!sanitized) return undefined;
+  if (!ALLOWED_CONSOLE_LEVELS.has(sanitized)) return undefined;
+  return sanitized;
+}
+
+function sanitizeTargetId(targetId: unknown): string | undefined {
+  const sanitized = sanitizeString(targetId, 256);
+  if (!sanitized) return undefined;
+  // Only allow alphanumeric, hyphens, underscores, and dots
+  if (!/^[a-zA-Z0-9\-_.]+$/.test(sanitized)) return undefined;
+  return sanitized;
+}
+
+function sanitizeUrl(url: unknown): string {
+  const sanitized = sanitizeString(url, 2048);
+  if (!sanitized) throw new Error("Invalid or empty URL provided");
+  // Basic URL/glob validation: allow printable ASCII, reject control chars
+  if (/[\x00-\x1f\x7f]/.test(sanitized)) throw new Error("URL contains invalid characters");
+  return sanitized;
+}
+
+function sanitizePositiveInteger(value: unknown): number | undefined {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0 || !Number.isInteger(num)) return undefined;
+  return num;
+}
+
 export function registerBrowserActionObserveCommands(
   browser: Command,
   parentOpts: (cmd: Command) => BrowserParentOpts,
@@ -23,14 +61,16 @@ export function registerBrowserActionObserveCommands(
       const parent = parentOpts(cmd);
       const profile = parent?.browserProfile;
       await runBrowserObserve(async () => {
+        const level = sanitizeLevel(opts.level);
+        const targetId = sanitizeTargetId(opts.targetId);
         const result = await callBrowserRequest<{ messages: unknown[] }>(
           parent,
           {
             method: "GET",
             path: "/console",
             query: {
-              level: opts.level?.trim() || undefined,
-              targetId: opts.targetId?.trim() || undefined,
+              level,
+              targetId,
               profile,
             },
           },
@@ -52,13 +92,14 @@ export function registerBrowserActionObserveCommands(
       const parent = parentOpts(cmd);
       const profile = parent?.browserProfile;
       await runBrowserObserve(async () => {
+        const targetId = sanitizeTargetId(opts.targetId);
         const result = await callBrowserRequest<{ path: string }>(
           parent,
           {
             method: "POST",
             path: "/pdf",
             query: profile ? { profile } : undefined,
-            body: { targetId: opts.targetId?.trim() || undefined },
+            body: { targetId },
           },
           { timeoutMs: 20000 },
         );
@@ -87,8 +128,10 @@ export function registerBrowserActionObserveCommands(
       const parent = parentOpts(cmd);
       const profile = parent?.browserProfile;
       await runBrowserObserve(async () => {
-        const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : undefined;
-        const maxChars = Number.isFinite(opts.maxChars) ? opts.maxChars : undefined;
+        const sanitizedUrl = sanitizeUrl(url);
+        const timeoutMs = sanitizePositiveInteger(opts.timeoutMs);
+        const maxChars = sanitizePositiveInteger(opts.maxChars);
+        const targetId = sanitizeTargetId(opts.targetId);
         const result = await callBrowserRequest<{ response: { body: string } }>(
           parent,
           {
@@ -96,8 +139,8 @@ export function registerBrowserActionObserveCommands(
             path: "/response/body",
             query: profile ? { profile } : undefined,
             body: {
-              url,
-              targetId: opts.targetId?.trim() || undefined,
+              url: sanitizedUrl,
+              targetId,
               timeoutMs,
               maxChars,
             },
