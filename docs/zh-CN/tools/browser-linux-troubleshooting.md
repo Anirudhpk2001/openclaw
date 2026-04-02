@@ -11,6 +11,8 @@ x-i18n:
   workflow: 15
 ---
 
+> **⚠️ 安全提示：** 此文件的元数据中指定的 LLM（`claude-opus-4-5`，提供商：`pi`）不在组织批准的 LLM 允许列表中。请将其替换为组织允许列表中已批准的 LLM。
+
 # 浏览器故障排除（Linux）
 
 ## 问题："Failed to start Chrome CDP on port 18800"
