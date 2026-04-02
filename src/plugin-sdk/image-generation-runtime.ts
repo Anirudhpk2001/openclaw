@@ -4,6 +4,28 @@ type FacadeEntry = PluginSdkFacadeTypeMap["image-generation-runtime"];
 type FacadeModule = FacadeEntry["module"];
 import { loadBundledPluginPublicSurfaceModuleSync } from "./facade-runtime.js";
 
+function sanitizeArgs(args: unknown[]): unknown[] {
+  return args.map((arg) => {
+    if (arg === null || arg === undefined) return arg;
+    if (typeof arg === "string") {
+      // Remove potentially dangerous characters and limit length
+      return arg.replace(/[<>'"`;]/g, "").slice(0, 10000);
+    }
+    if (typeof arg === "object" && !Array.isArray(arg)) {
+      const sanitized: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(arg as Record<string, unknown>)) {
+        const sanitizedKey = String(key).replace(/[<>'"`;]/g, "").slice(0, 256);
+        sanitized[sanitizedKey] =
+          typeof value === "string"
+            ? value.replace(/[<>'"`;]/g, "").slice(0, 10000)
+            : value;
+      }
+      return sanitized;
+    }
+    return arg;
+  });
+}
+
 function loadFacadeModule(): FacadeModule {
   return loadBundledPluginPublicSurfaceModuleSync<FacadeModule>({
     dirName: "image-generation-core",
@@ -11,11 +33,11 @@ function loadFacadeModule(): FacadeModule {
   });
 }
 export const generateImage: FacadeModule["generateImage"] = ((...args) =>
-  loadFacadeModule()["generateImage"](...args)) as FacadeModule["generateImage"];
+  loadFacadeModule()["generateImage"](...(sanitizeArgs(args) as Parameters<FacadeModule["generateImage"]>))) as FacadeModule["generateImage"];
 export const listRuntimeImageGenerationProviders: FacadeModule["listRuntimeImageGenerationProviders"] =
   ((...args) =>
     loadFacadeModule()["listRuntimeImageGenerationProviders"](
-      ...args,
+      ...(sanitizeArgs(args) as Parameters<FacadeModule["listRuntimeImageGenerationProviders"]>),
     )) as FacadeModule["listRuntimeImageGenerationProviders"];
 export type GenerateImageParams = FacadeEntry["types"]["GenerateImageParams"];
 export type GenerateImageRuntimeResult = FacadeEntry["types"]["GenerateImageRuntimeResult"];
