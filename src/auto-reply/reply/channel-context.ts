@@ -20,18 +20,24 @@ const ALLOWED_SURFACE_PATTERN = /^[a-z0-9_-]{0,64}$/;
 const ALLOWED_ACCOUNT_ID_PATTERN = /^[a-zA-Z0-9_@.-]{0,128}$/;
 const MAX_STRING_LENGTH = 256;
 
-function sanitizeString(value: unknown): string {
+function sanitizeStringInput(value: unknown): string {
   if (typeof value !== "string") return "";
-  return value.slice(0, MAX_STRING_LENGTH).replace(/[\x00-\x1F\x7F]/g, "").trim();
+  return value.slice(0, MAX_STRING_LENGTH).replace(/[^\w\s@.,:;!?#&()\-]/g, "").trim();
 }
 
 function sanitizeSurfaceChannel(value: string): string {
   const lower = value.toLowerCase();
-  return ALLOWED_SURFACE_PATTERN.test(lower) ? lower : "";
+  if (ALLOWED_SURFACE_PATTERN.test(lower)) {
+    return lower;
+  }
+  return "";
 }
 
 function sanitizeAccountId(value: string): string {
-  return ALLOWED_ACCOUNT_ID_PATTERN.test(value) ? value : "";
+  if (ALLOWED_ACCOUNT_ID_PATTERN.test(value)) {
+    return value;
+  }
+  return "";
 }
 
 export function isDiscordSurface(params: DiscordSurfaceParams): boolean {
@@ -48,11 +54,12 @@ export function isMatrixSurface(params: DiscordSurfaceParams): boolean {
 
 export function resolveCommandSurfaceChannel(params: DiscordSurfaceParams): string {
   const rawChannel =
-    sanitizeString(params.ctx.OriginatingChannel) ||
-    sanitizeString(params.command.channel) ||
-    sanitizeString(params.ctx.Surface) ||
-    sanitizeString(params.ctx.Provider);
-  return sanitizeSurfaceChannel(rawChannel);
+    params.ctx.OriginatingChannel ??
+    params.command.channel ??
+    params.ctx.Surface ??
+    params.ctx.Provider;
+  const sanitized = sanitizeStringInput(rawChannel);
+  return sanitizeSurfaceChannel(sanitized);
 }
 
 export function resolveDiscordAccountId(params: DiscordAccountParams): string {
@@ -60,7 +67,8 @@ export function resolveDiscordAccountId(params: DiscordAccountParams): string {
 }
 
 export function resolveChannelAccountId(params: DiscordAccountParams): string {
-  const raw = sanitizeString(params.ctx.AccountId);
-  const accountId = sanitizeAccountId(raw);
+  const raw = typeof params.ctx.AccountId === "string" ? params.ctx.AccountId.trim() : "";
+  const sanitized = sanitizeStringInput(raw);
+  const accountId = sanitizeAccountId(sanitized);
   return accountId || "default";
 }
