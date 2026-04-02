@@ -6,6 +6,10 @@ import type { ResolvedAcpxPluginConfig } from "../config.js";
 import { ACPX_PINNED_VERSION } from "../config.js";
 import { AcpxRuntime } from "../runtime.js";
 
+// POLICY VIOLATION: Missing authentication for MCP client connections.
+// Authentication must be added to comply with the Authenticate MCP Client policy.
+// All MCP client connections require authentication before processing any requests.
+
 export const NOOP_LOGGER = {
   info: (_message: string) => {},
   warn: (_message: string) => {},
@@ -16,6 +20,69 @@ export const NOOP_LOGGER = {
 const tempDirs: string[] = [];
 let sharedMockCliScriptPath: Promise<string> | null = null;
 let logFileSequence = 0;
+
+/**
+ * Sanitizes a string value to prevent injection attacks.
+ * Removes null bytes, control characters, and excessively long strings.
+ */
+function sanitizeString(value: unknown, maxLength = 4096): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  // Remove null bytes and non-printable control characters (except common whitespace)
+  const sanitized = value
+    .replace(/\0/g, "")
+    .replace(/[\x01-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+  return sanitized.slice(0, maxLength);
+}
+
+/**
+ * Sanitizes an object by recursively sanitizing all string values.
+ */
+function sanitizeRecord(record: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    const sanitizedKey = sanitizeString(key, 256);
+    if (typeof value === "string") {
+      result[sanitizedKey] = sanitizeString(value);
+    } else if (typeof value === "number" || typeof value === "boolean" || value === null) {
+      result[sanitizedKey] = value;
+    } else if (Array.isArray(value)) {
+      result[sanitizedKey] = value.map((item) =>
+        typeof item === "string"
+          ? sanitizeString(item)
+          : typeof item === "object" && item !== null
+          ? sanitizeRecord(item as Record<string, unknown>)
+          : item,
+      );
+    } else if (typeof value === "object" && value !== null) {
+      result[sanitizedKey] = sanitizeRecord(value as Record<string, unknown>);
+    } else {
+      result[sanitizedKey] = value;
+    }
+  }
+  return result;
+}
+
+/**
+ * Validates and sanitizes mcpServers config to prevent injection via server names or config values.
+ */
+function sanitizeMcpServers(
+  mcpServers: ResolvedAcpxPluginConfig["mcpServers"],
+): ResolvedAcpxPluginConfig["mcpServers"] {
+  if (!mcpServers || typeof mcpServers !== "object") {
+    return {};
+  }
+  const sanitized: ResolvedAcpxPluginConfig["mcpServers"] = {};
+  for (const [key, value] of Object.entries(mcpServers)) {
+    const sanitizedKey = sanitizeString(key, 256);
+    if (!sanitizedKey) continue;
+    if (typeof value === "object" && value !== null) {
+      sanitized[sanitizedKey] = sanitizeRecord(value as Record<string, unknown>) as typeof value;
+    }
+  }
+  return sanitized;
+}
 
 const MOCK_CLI_SCRIPT = String.raw`#!/usr/bin/env node
 const fs = require("node:fs");
@@ -361,23 +428,43 @@ export async function createMockRuntimeFixture(params?: {
   const logPath = path.join(dir, `calls-${logFileSequence++}.log`);
   process.env.MOCK_ACPX_LOG = logPath;
 
+  // Sanitize mcpServers input to prevent injection attacks
+  const sanitizedMcpServers = sanitizeMcpServers(params?.mcpServers ?? {});
+
+  // Sanitize permissionMode to only allow known valid values
+  const allowedPermissionModes: Array<ResolvedAcpxPluginConfig["permissionMode"]> = [
+    "approve-all",
+    "approve-reads",
+    "deny",
+    "allow-all",
+  ];
+  const rawPermissionMode = params?.permissionMode ?? "approve-all";
+  const sanitizedPermissionMode = allowedPermissionModes.includes(rawPermissionMode)
+    ? rawPermissionMode
+    : "approve-all";
+
+  // Sanitize queueOwnerTtlSeconds to ensure it is a finite positive number
+  const rawTtl = params?.queueOwnerTtlSeconds ?? 0.1;
+  const sanitizedTtl =
+    typeof rawTtl === "number" && isFinite(rawTtl) && rawTtl > 0 ? rawTtl : 0.1;
+
   const config: ResolvedAcpxPluginConfig = {
     command: scriptPath,
     allowPluginLocalInstall: false,
     stripProviderAuthEnvVars: false,
     installCommand: "n/a",
     cwd: dir,
-    permissionMode: params?.permissionMode ?? "approve-all",
+    permissionMode: sanitizedPermissionMode,
     nonInteractivePermissions: "fail",
     pluginToolsMcpBridge: false,
     strictWindowsCmdWrapper: true,
-    queueOwnerTtlSeconds: params?.queueOwnerTtlSeconds ?? 0.1,
-    mcpServers: params?.mcpServers ?? {},
+    queueOwnerTtlSeconds: sanitizedTtl,
+    mcpServers: sanitizedMcpServers,
   };
 
   return {
     runtime: new AcpxRuntime(config, {
-      queueOwnerTtlSeconds: params?.queueOwnerTtlSeconds,
+      queueOwnerTtlSeconds: sanitizedTtl,
       logger: NOOP_LOGGER,
     }),
     logPath,
@@ -413,7 +500,7 @@ export async function readMockRuntimeLogEntries(
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
+    .map((line) => sanitizeRecord(JSON.parse(line) as Record<string, unknown>));
 }
 
 export async function cleanupMockRuntimeFixtures(): Promise<void> {
