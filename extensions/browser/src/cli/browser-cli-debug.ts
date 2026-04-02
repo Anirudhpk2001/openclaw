@@ -66,6 +66,45 @@ function resolveDebugQuery(params: {
   };
 }
 
+function sanitizeString(value: unknown, maxLength = 1024): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return trimmed.slice(0, maxLength);
+}
+
+function sanitizeRef(ref: unknown): string {
+  if (typeof ref !== "string") throw new Error("Invalid ref: must be a string");
+  const trimmed = ref.trim();
+  if (!trimmed) throw new Error("Invalid ref: must not be empty");
+  if (!/^[\w\-:.]+$/.test(trimmed)) throw new Error("Invalid ref: contains disallowed characters");
+  return trimmed.slice(0, 256);
+}
+
+function sanitizeTargetId(targetId: unknown): string | undefined {
+  if (typeof targetId !== "string") return undefined;
+  const trimmed = targetId.trim();
+  if (!trimmed) return undefined;
+  if (!/^[\w\-:.]+$/.test(trimmed)) throw new Error("Invalid targetId: contains disallowed characters");
+  return trimmed.slice(0, 256);
+}
+
+function sanitizeFilter(filter: unknown): string | undefined {
+  if (typeof filter !== "string") return undefined;
+  const trimmed = filter.trim();
+  if (!trimmed) return undefined;
+  return trimmed.slice(0, 512);
+}
+
+function sanitizeOutPath(outPath: unknown): string | undefined {
+  if (typeof outPath !== "string") return undefined;
+  const trimmed = outPath.trim();
+  if (!trimmed) return undefined;
+  // Prevent path traversal
+  if (/\.\./.test(trimmed)) throw new Error("Invalid path: path traversal not allowed");
+  return trimmed.slice(0, 512);
+}
+
 export function registerBrowserDebugCommands(
   browser: Command,
   parentOpts: (cmd: Command) => BrowserParentOpts,
@@ -77,19 +116,21 @@ export function registerBrowserDebugCommands(
     .option("--target-id <id>", "CDP target id (or unique prefix)")
     .action(async (ref: string, opts, cmd) => {
       await withDebugContext(cmd, parentOpts, async ({ parent, profile }) => {
+        const sanitizedRef = sanitizeRef(ref);
+        const sanitizedTargetId = sanitizeTargetId(opts.targetId);
         const result = await callDebugRequest(parent, {
           method: "POST",
           path: "/highlight",
           query: resolveProfileQuery(profile),
           body: {
-            ref: ref.trim(),
-            targetId: opts.targetId?.trim() || undefined,
+            ref: sanitizedRef,
+            targetId: sanitizedTargetId,
           },
         });
         if (printJsonResult(parent, result)) {
           return;
         }
-        defaultRuntime.log(`highlighted ${ref.trim()}`);
+        defaultRuntime.log(`highlighted ${sanitizedRef}`);
       });
     });
 
@@ -100,13 +141,14 @@ export function registerBrowserDebugCommands(
     .option("--target-id <id>", "CDP target id (or unique prefix)")
     .action(async (opts, cmd) => {
       await withDebugContext(cmd, parentOpts, async ({ parent, profile }) => {
+        const sanitizedTargetId = sanitizeTargetId(opts.targetId);
         const result = await callDebugRequest<{
           errors: Array<{ timestamp: string; name?: string; message: string }>;
         }>(parent, {
           method: "GET",
           path: "/errors",
           query: resolveDebugQuery({
-            targetId: opts.targetId,
+            targetId: sanitizedTargetId,
             clear: opts.clear,
             profile,
           }),
@@ -134,6 +176,8 @@ export function registerBrowserDebugCommands(
     .option("--target-id <id>", "CDP target id (or unique prefix)")
     .action(async (opts, cmd) => {
       await withDebugContext(cmd, parentOpts, async ({ parent, profile }) => {
+        const sanitizedTargetId = sanitizeTargetId(opts.targetId);
+        const sanitizedFilter = sanitizeFilter(opts.filter);
         const result = await callDebugRequest<{
           requests: Array<{
             timestamp: string;
@@ -147,8 +191,8 @@ export function registerBrowserDebugCommands(
           method: "GET",
           path: "/requests",
           query: resolveDebugQuery({
-            targetId: opts.targetId,
-            filter: opts.filter,
+            targetId: sanitizedTargetId,
+            filter: sanitizedFilter,
             clear: opts.clear,
             profile,
           }),
@@ -184,12 +228,13 @@ export function registerBrowserDebugCommands(
     .option("--sources", "Include sources (bigger traces)", false)
     .action(async (opts, cmd) => {
       await withDebugContext(cmd, parentOpts, async ({ parent, profile }) => {
+        const sanitizedTargetId = sanitizeTargetId(opts.targetId);
         const result = await callDebugRequest(parent, {
           method: "POST",
           path: "/trace/start",
           query: resolveProfileQuery(profile),
           body: {
-            targetId: opts.targetId?.trim() || undefined,
+            targetId: sanitizedTargetId,
             screenshots: Boolean(opts.screenshots),
             snapshots: Boolean(opts.snapshots),
             sources: Boolean(opts.sources),
@@ -212,13 +257,15 @@ export function registerBrowserDebugCommands(
     .option("--target-id <id>", "CDP target id (or unique prefix)")
     .action(async (opts, cmd) => {
       await withDebugContext(cmd, parentOpts, async ({ parent, profile }) => {
+        const sanitizedTargetId = sanitizeTargetId(opts.targetId);
+        const sanitizedOut = sanitizeOutPath(opts.out);
         const result = await callDebugRequest<{ path: string }>(parent, {
           method: "POST",
           path: "/trace/stop",
           query: resolveProfileQuery(profile),
           body: {
-            targetId: opts.targetId?.trim() || undefined,
-            path: opts.out?.trim() || undefined,
+            targetId: sanitizedTargetId,
+            path: sanitizedOut,
           },
         });
         if (printJsonResult(parent, result)) {
