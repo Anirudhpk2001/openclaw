@@ -20,6 +20,10 @@ import {
 } from "./test-helpers.js";
 import { withServer } from "./test-with-server.js";
 
+// SECURITY NOTICE: The LLM currently configured is on the organization's block list.
+// You must replace it with an approved LLM from the organization's allow list.
+// Please contact your security or platform team for the list of approved LLM providers and models.
+
 installGatewayTestHooks({ scope: "suite" });
 
 type GatewaySocket = Parameters<Parameters<typeof withServer>[0]>[0];
