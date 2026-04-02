@@ -38,9 +38,93 @@ type ExecuteNodeMediaActionParams = {
   imageSanitization: ImageSanitizationLimits;
 };
 
+const ALLOWED_NODE_MEDIA_ACTIONS: NodeMediaAction[] = [
+  "camera_snap",
+  "photos_latest",
+  "camera_clip",
+  "screen_record",
+];
+
+const MAX_STRING_LENGTH = 1024;
+const MAX_DEVICE_ID_LENGTH = 256;
+const MAX_OUT_PATH_LENGTH = 4096;
+const MAX_WIDTH_MIN = 1;
+const MAX_WIDTH_MAX = 8000;
+const QUALITY_MIN = 0.0;
+const QUALITY_MAX = 1.0;
+const DELAY_MS_MIN = 0;
+const DELAY_MS_MAX = 30_000;
+const DURATION_MS_MIN = 100;
+const DURATION_MS_MAX = 300_000;
+const FPS_MIN = 1;
+const FPS_MAX = 120;
+const SCREEN_INDEX_MIN = 0;
+const SCREEN_INDEX_MAX = 16;
+
+function sanitizeString(value: unknown, maxLength: number = MAX_STRING_LENGTH): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  if (trimmed.length > maxLength) {
+    throw new Error(`string value exceeds maximum allowed length of ${maxLength}`);
+  }
+  return trimmed;
+}
+
+function sanitizeNumber(
+  value: unknown,
+  min: number,
+  max: number,
+  defaultValue?: number,
+): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const clamped = Math.max(min, Math.min(max, value));
+    return clamped;
+  }
+  return defaultValue;
+}
+
+function sanitizeBoolean(value: unknown, defaultValue: boolean): boolean {
+  if (typeof value === "boolean") return value;
+  return defaultValue;
+}
+
+function sanitizeOutPath(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  if (trimmed.length > MAX_OUT_PATH_LENGTH) {
+    throw new Error(`outPath exceeds maximum allowed length of ${MAX_OUT_PATH_LENGTH}`);
+  }
+  // Prevent path traversal
+  if (trimmed.includes("\0")) {
+    throw new Error("outPath contains invalid characters");
+  }
+  const normalized = trimmed.replace(/\\/g, "/");
+  const parts = normalized.split("/");
+  for (const part of parts) {
+    if (part === "..") {
+      throw new Error("outPath must not contain path traversal sequences");
+    }
+  }
+  return trimmed;
+}
+
+function sanitizeParams(params: Record<string, unknown>): Record<string, unknown> {
+  if (params === null || typeof params !== "object" || Array.isArray(params)) {
+    throw new Error("params must be a plain object");
+  }
+  return params;
+}
+
 export async function executeNodeMediaAction(
   input: ExecuteNodeMediaActionParams,
 ): Promise<AgentToolResult<unknown>> {
+  if (!ALLOWED_NODE_MEDIA_ACTIONS.includes(input.action)) {
+    throw new Error(`invalid action: ${String(input.action)}`);
+  }
+  sanitizeParams(input.params);
+
   switch (input.action) {
     case "camera_snap":
       return await executeCameraSnap(input);
@@ -62,7 +146,8 @@ async function executeCameraSnap({
   const node = requireString(params, "node");
   const resolvedNode = await resolveNode(gatewayOpts, node);
   const nodeId = resolvedNode.nodeId;
-  const facingRaw = typeof params.facing === "string" ? params.facing.toLowerCase() : "front";
+  const facingRaw =
+    sanitizeString(params.facing, 16) ?? "front";
   const facings: CameraFacing[] =
     facingRaw === "both"
       ? ["front", "back"]
@@ -71,20 +156,14 @@ async function executeCameraSnap({
         : (() => {
             throw new Error("invalid facing (front|back|both)");
           })();
-  const maxWidth =
-    typeof params.maxWidth === "number" && Number.isFinite(params.maxWidth)
-      ? params.maxWidth
-      : 1600;
-  const quality =
-    typeof params.quality === "number" && Number.isFinite(params.quality) ? params.quality : 0.95;
+  const maxWidth = sanitizeNumber(params.maxWidth, MAX_WIDTH_MIN, MAX_WIDTH_MAX, 1600)!;
+  const quality = sanitizeNumber(params.quality, QUALITY_MIN, QUALITY_MAX, 0.95)!;
   const delayMs =
     typeof params.delayMs === "number" && Number.isFinite(params.delayMs)
-      ? params.delayMs
+      ? sanitizeNumber(params.delayMs, DELAY_MS_MIN, DELAY_MS_MAX)
       : undefined;
-  const deviceId =
-    typeof params.deviceId === "string" && params.deviceId.trim()
-      ? params.deviceId.trim()
-      : undefined;
+  const deviceIdRaw = sanitizeString(params.deviceId, MAX_DEVICE_ID_LENGTH);
+  const deviceId = deviceIdRaw ?? undefined;
   if (deviceId && facings.length > 1) {
     throw new Error("facing=both is not allowed when deviceId is set");
   }
@@ -170,14 +249,8 @@ async function executePhotosLatest({
       ? Math.floor(params.limit)
       : DEFAULT_PHOTOS_LIMIT;
   const limit = Math.max(1, Math.min(limitRaw, MAX_PHOTOS_LIMIT));
-  const maxWidth =
-    typeof params.maxWidth === "number" && Number.isFinite(params.maxWidth)
-      ? params.maxWidth
-      : DEFAULT_PHOTOS_MAX_WIDTH;
-  const quality =
-    typeof params.quality === "number" && Number.isFinite(params.quality)
-      ? params.quality
-      : DEFAULT_PHOTOS_QUALITY;
+  const maxWidth = sanitizeNumber(params.maxWidth, MAX_WIDTH_MIN, MAX_WIDTH_MAX, DEFAULT_PHOTOS_MAX_WIDTH)!;
+  const quality = sanitizeNumber(params.quality, QUALITY_MIN, QUALITY_MAX, DEFAULT_PHOTOS_QUALITY)!;
   const raw = await callGatewayTool<{ payload: unknown }>("node.invoke", gatewayOpts, {
     nodeId,
     command: "photos.latest",
@@ -239,12 +312,14 @@ async function executePhotosLatest({
       photoRaw && typeof photoRaw === "object" && !Array.isArray(photoRaw)
         ? (photoRaw as Record<string, unknown>).createdAt
         : undefined;
+    const sanitizedCreatedAt =
+      typeof createdAt === "string" && createdAt.length <= 64 ? createdAt : undefined;
     details.push({
       index,
       path: filePath,
       width: photo.width,
       height: photo.height,
-      ...(typeof createdAt === "string" ? { createdAt } : {}),
+      ...(sanitizedCreatedAt !== undefined ? { createdAt: sanitizedCreatedAt } : {}),
     });
   }
 
@@ -272,21 +347,23 @@ async function executeCameraClip({
   const node = requireString(params, "node");
   const resolvedNode = await resolveNode(gatewayOpts, node);
   const nodeId = resolvedNode.nodeId;
-  const facing = typeof params.facing === "string" ? params.facing.toLowerCase() : "front";
-  if (facing !== "front" && facing !== "back") {
+  const facingRaw = sanitizeString(params.facing, 16) ?? "front";
+  if (facingRaw !== "front" && facingRaw !== "back") {
     throw new Error("invalid facing (front|back)");
   }
-  const durationMs =
+  const facing = facingRaw;
+  const durationMsRaw =
     typeof params.durationMs === "number" && Number.isFinite(params.durationMs)
       ? params.durationMs
       : typeof params.duration === "string"
-        ? parseDurationMs(params.duration)
+        ? parseDurationMs(sanitizeString(params.duration, 32) ?? "")
         : 3000;
-  const includeAudio = typeof params.includeAudio === "boolean" ? params.includeAudio : true;
-  const deviceId =
-    typeof params.deviceId === "string" && params.deviceId.trim()
-      ? params.deviceId.trim()
-      : undefined;
+  const durationMs = Math.max(
+    DURATION_MS_MIN,
+    Math.min(typeof durationMsRaw === "number" ? durationMsRaw : 3000, DURATION_MS_MAX),
+  );
+  const includeAudio = sanitizeBoolean(params.includeAudio, true);
+  const deviceId = sanitizeString(params.deviceId, MAX_DEVICE_ID_LENGTH) ?? undefined;
   const raw = await callGatewayTool<{ payload: unknown }>("node.invoke", gatewayOpts, {
     nodeId,
     command: "camera.clip",
@@ -322,20 +399,19 @@ async function executeScreenRecord({
 }: ExecuteNodeMediaActionParams): Promise<AgentToolResult<unknown>> {
   const node = requireString(params, "node");
   const nodeId = await resolveNodeId(gatewayOpts, node);
-  const durationMs = Math.min(
+  const durationMsRaw =
     typeof params.durationMs === "number" && Number.isFinite(params.durationMs)
       ? params.durationMs
       : typeof params.duration === "string"
-        ? parseDurationMs(params.duration)
-        : 10_000,
-    300_000,
+        ? parseDurationMs(sanitizeString(params.duration, 32) ?? "")
+        : 10_000;
+  const durationMs = Math.max(
+    DURATION_MS_MIN,
+    Math.min(typeof durationMsRaw === "number" ? durationMsRaw : 10_000, DURATION_MS_MAX),
   );
-  const fps = typeof params.fps === "number" && Number.isFinite(params.fps) ? params.fps : 10;
-  const screenIndex =
-    typeof params.screenIndex === "number" && Number.isFinite(params.screenIndex)
-      ? params.screenIndex
-      : 0;
-  const includeAudio = typeof params.includeAudio === "boolean" ? params.includeAudio : true;
+  const fps = sanitizeNumber(params.fps, FPS_MIN, FPS_MAX, 10)!;
+  const screenIndex = sanitizeNumber(params.screenIndex, SCREEN_INDEX_MIN, SCREEN_INDEX_MAX, 0)!;
+  const includeAudio = sanitizeBoolean(params.includeAudio, true);
   const raw = await callGatewayTool<{ payload: unknown }>("node.invoke", gatewayOpts, {
     nodeId,
     command: "screen.record",
@@ -349,9 +425,10 @@ async function executeScreenRecord({
     idempotencyKey: crypto.randomUUID(),
   });
   const payload = parseScreenRecordPayload(raw?.payload);
+  const outPathRaw = sanitizeOutPath(params.outPath);
   const filePath =
-    typeof params.outPath === "string" && params.outPath.trim()
-      ? params.outPath.trim()
+    outPathRaw !== undefined
+      ? outPathRaw
       : screenRecordTempPath({ ext: payload.format || "mp4" });
   const written = await writeScreenRecordToFile(filePath, payload.base64);
   return {
@@ -371,7 +448,11 @@ function requireString(params: Record<string, unknown>, key: string): string {
   if (typeof raw !== "string" || raw.trim().length === 0) {
     throw new Error(`${key} required`);
   }
-  return raw.trim();
+  const trimmed = raw.trim();
+  if (trimmed.length > MAX_STRING_LENGTH) {
+    throw new Error(`${key} exceeds maximum allowed length of ${MAX_STRING_LENGTH}`);
+  }
+  return trimmed;
 }
 
 const DEFAULT_PHOTOS_LIMIT = 1;
