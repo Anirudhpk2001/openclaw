@@ -1,0 +1,53 @@
+name: AI Policy PR Scan
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  pr-scan:
+    name: Lineaje AI Policy Scan
+    runs-on: [self-hosted, lineaje-scanner]    # runs on your EC2 where the scripts are deployed
+
+    steps:
+      - name: Run PR Scan
+        run: |                                                                                                                                                                                                                                                                                              
+          cd /home/ubuntu/lineaje_mcp/aipo_mcp_server                                                                                                                                                                                                                                                       
+          source venv/bin/activate                                                                                                                                                                                                                                                                          
+          python scripts/pr_scan.py
+        env:
+          # PR context — injected automatically by GitHub Actions
+          PR_NUMBER: ${{ github.event.number }}
+          PR_BRANCH: ${{ github.head_ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_REPO: ${{ github.event.pull_request.head.repo.clone_url }}
+          SOURCE_CODE_REPO: https://github.com/Anirudhpk2001/openclaw.git
+
+          # SCM auth — GitHub provides this automatically, no secret needed
+          SCM_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SCM_PROVIDER: github
+
+          # MCP server
+          MCP_SERVER_URL: ${{ secrets.MCP_SERVER_URL }}
+
+          # Bearer token — if set, used directly; if not, auto-fetched from Keycloak
+          MCP_BEARER_TOKEN: ${{ secrets.MCP_BEARER_TOKEN }}
+
+          # Keycloak fallback (used only when MCP_BEARER_TOKEN is not set)
+          KEYCLOAK_BASE: ${{ secrets.KEYCLOAK_BASE }}
+          OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
+          SERVICE_ACCOUNT_USERNAME: ${{ secrets.SERVICE_ACCOUNT_USERNAME }}
+          SERVICE_ACCOUNT_PASSWORD: ${{ secrets.SERVICE_ACCOUNT_PASSWORD }}
+
+          # LLM for generating code fixes
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          LLM_API_URL: ${{ secrets.LLM_API_URL }}
+
+          # AWS / S3 for archive upload
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          SCIM_SERVICE_URL: ${{ secrets.SCIM_SERVICE_URL }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+          S3_FOLDER: ${{ secrets.S3_FOLDER }}
