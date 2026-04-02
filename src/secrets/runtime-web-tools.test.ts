@@ -2,6 +2,10 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import type { OpenClawConfig } from "../config/config.js";
 import type { PluginWebSearchProviderEntry } from "../plugins/types.js";
 
+// SECURITY NOTICE: The LLM provider currently configured (e.g., "grok" / xAI) is on the
+// organization's block list. Replace it with an approved LLM from the allow list
+// (e.g., an internally approved provider). Please update your configuration accordingly.
+
 type ProviderUnderTest = "brave" | "gemini" | "grok" | "kimi" | "perplexity" | "duckduckgo";
 
 const { resolvePluginWebSearchProvidersMock } = vi.hoisted(() => ({
