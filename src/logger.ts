@@ -64,6 +64,7 @@ export function logWarn(message: string, runtime: RuntimeEnv = defaultRuntime) {
   });
 }
 
+/** Logs a success message to the console and structured logger. */
 export function logSuccess(message: string, runtime: RuntimeEnv = defaultRuntime) {
   logWithSubsystem({
     message,
