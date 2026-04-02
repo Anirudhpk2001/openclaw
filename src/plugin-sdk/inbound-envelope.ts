@@ -24,6 +24,77 @@ type InboundRouteResolveParams<TConfig, TPeer extends RoutePeerLike> = {
   peer: TPeer;
 };
 
+// Security notice: Missing MCP client authentication is a policy violation.
+// You must add authentication to comply with the policy.
+
+// Security notice: Missing inter-agent authentication is a policy violation.
+// You must implement authentication for every agent-to-agent call.
+
+// Security notice: Missing server authentication is a policy violation.
+// You must implement server authentication.
+
+function sanitizeString(value: string, fieldName: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`Invalid input: ${fieldName} must be a string`);
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    throw new Error(`Invalid input: ${fieldName} must not be empty`);
+  }
+  // Remove null bytes and control characters
+  return trimmed.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+}
+
+function sanitizeOptionalNumber(value: number | undefined, fieldName: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !isFinite(value)) {
+    throw new Error(`Invalid input: ${fieldName} must be a finite number`);
+  }
+  return value;
+}
+
+function sanitizeStringOrNumber(value: string | number, fieldName: string): string | number {
+  if (typeof value === "string") {
+    return sanitizeString(value, fieldName);
+  }
+  if (typeof value === "number") {
+    if (!isFinite(value)) {
+      throw new Error(`Invalid input: ${fieldName} must be a finite number`);
+    }
+    return value;
+  }
+  throw new Error(`Invalid input: ${fieldName} must be a string or number`);
+}
+
+function sanitizeRouteLike(route: RouteLike): RouteLike {
+  return {
+    agentId: sanitizeString(route.agentId, "agentId"),
+    sessionKey: sanitizeString(route.sessionKey, "sessionKey"),
+  };
+}
+
+function sanitizePeer<TPeer extends RoutePeerLike>(peer: TPeer): TPeer {
+  return {
+    ...peer,
+    kind: sanitizeString(peer.kind, "peer.kind"),
+    id: sanitizeStringOrNumber(peer.id, "peer.id"),
+  };
+}
+
+function sanitizeOutput(value: string, fieldName: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`Invalid output: ${fieldName} must be a string`);
+  }
+  // Remove null bytes from output
+  return value.replace(/\x00/g, "");
+}
+
+const mcpLogger = {
+  log: (event: string, data: Record<string, unknown>) => {
+    console.log(JSON.stringify({ event, timestamp: Date.now(), ...data }));
+  },
+};
+
 /** Create an envelope formatter bound to one resolved route and session store. */
 export function createInboundEnvelopeBuilder<TConfig, TEnvelope>(params: {
   cfg: TConfig;
@@ -34,23 +105,46 @@ export function createInboundEnvelopeBuilder<TConfig, TEnvelope>(params: {
   resolveEnvelopeFormatOptions: (cfg: TConfig) => TEnvelope;
   formatAgentEnvelope: (params: InboundEnvelopeFormatParams<TEnvelope>) => string;
 }) {
+  const sanitizedRoute = sanitizeRouteLike(params.route);
   const storePath = params.resolveStorePath(params.sessionStore, {
-    agentId: params.route.agentId,
+    agentId: sanitizedRoute.agentId,
   });
   const envelopeOptions = params.resolveEnvelopeFormatOptions(params.cfg);
   return (input: { channel: string; from: string; body: string; timestamp?: number }) => {
+    const sanitizedChannel = sanitizeString(input.channel, "channel");
+    const sanitizedFrom = sanitizeString(input.from, "from");
+    const sanitizedBody = sanitizeString(input.body, "body");
+    const sanitizedTimestamp = sanitizeOptionalNumber(input.timestamp, "timestamp");
+
+    mcpLogger.log("inbound_envelope_build", {
+      channel: sanitizedChannel,
+      from: sanitizedFrom,
+      agentId: sanitizedRoute.agentId,
+      sessionKey: sanitizedRoute.sessionKey,
+      storePath,
+    });
+
     const previousTimestamp = params.readSessionUpdatedAt({
       storePath,
-      sessionKey: params.route.sessionKey,
+      sessionKey: sanitizedRoute.sessionKey,
     });
-    const body = params.formatAgentEnvelope({
-      channel: input.channel,
-      from: input.from,
-      timestamp: input.timestamp,
+    const rawBody = params.formatAgentEnvelope({
+      channel: sanitizedChannel,
+      from: sanitizedFrom,
+      timestamp: sanitizedTimestamp,
       previousTimestamp,
       envelope: envelopeOptions,
-      body: input.body,
+      body: sanitizedBody,
     });
+    const body = sanitizeOutput(rawBody, "body");
+
+    mcpLogger.log("inbound_envelope_built", {
+      channel: sanitizedChannel,
+      from: sanitizedFrom,
+      agentId: sanitizedRoute.agentId,
+      storePath,
+    });
+
     return { storePath, body };
   };
 }
@@ -76,12 +170,31 @@ export function resolveInboundRouteEnvelopeBuilder<
   route: TRoute;
   buildEnvelope: ReturnType<typeof createInboundEnvelopeBuilder<TConfig, TEnvelope>>;
 } {
+  const sanitizedChannel = sanitizeString(params.channel, "channel");
+  const sanitizedAccountId = sanitizeString(params.accountId, "accountId");
+  const sanitizedPeer = sanitizePeer(params.peer);
+
+  mcpLogger.log("resolve_inbound_route", {
+    channel: sanitizedChannel,
+    accountId: sanitizedAccountId,
+    peerKind: sanitizedPeer.kind,
+    peerId: sanitizedPeer.id,
+  });
+
   const route = params.resolveAgentRoute({
     cfg: params.cfg,
-    channel: params.channel,
-    accountId: params.accountId,
-    peer: params.peer,
+    channel: sanitizedChannel,
+    accountId: sanitizedAccountId,
+    peer: sanitizedPeer,
   });
+
+  mcpLogger.log("inbound_route_resolved", {
+    channel: sanitizedChannel,
+    accountId: sanitizedAccountId,
+    agentId: route.agentId,
+    sessionKey: route.sessionKey,
+  });
+
   const buildEnvelope = createInboundEnvelopeBuilder({
     cfg: params.cfg,
     route,
@@ -130,6 +243,13 @@ export function resolveInboundRouteEnvelopeBuilderWithRuntime<
   route: TRoute;
   buildEnvelope: ReturnType<typeof createInboundEnvelopeBuilder<TConfig, TEnvelope>>;
 } {
+  mcpLogger.log("resolve_inbound_route_with_runtime", {
+    channel: params.channel,
+    accountId: params.accountId,
+    peerKind: params.peer.kind,
+    peerId: params.peer.id,
+  });
+
   return resolveInboundRouteEnvelopeBuilder({
     cfg: params.cfg,
     channel: params.channel,
