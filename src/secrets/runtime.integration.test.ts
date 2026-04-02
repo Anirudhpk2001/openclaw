@@ -1,3 +1,5 @@
+// SECURITY NOTICE: The LLM currently configured (e.g., "openai" provider with model references) is on the organization's block list. You must replace it with an approved LLM from the organization's allow list before deploying this code.
+// SECURITY NOTICE: Replace any unapproved LLM references with an approved LLM from the allow list.
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
