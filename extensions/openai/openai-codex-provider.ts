@@ -29,6 +29,12 @@ import {
   matchesExactOrPrefix,
 } from "./shared.js";
 
+// SECURITY NOTICE: The LLM models referenced in this file (gpt-5.4, gpt-5.3-codex, gpt-5.2-codex,
+// gpt-5.3-codex-spark, gpt-5.1-codex) are on the organization's block list and are NOT approved
+// for use. You must replace these models with an approved LLM from the organization's allow list.
+// Please consult your security or AI governance team for the list of approved models before
+// deploying this code.
+
 const PROVIDER_ID = "openai-codex";
 const OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 const OPENAI_CODEX_GPT_54_MODEL_ID = "gpt-5.4";
