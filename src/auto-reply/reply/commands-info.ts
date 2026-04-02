@@ -16,14 +16,13 @@ import type { CommandHandler } from "./commands-types.js";
 import { extractExplicitGroupId } from "./group-id.js";
 import { resolveReplyToMode } from "./reply-threading.js";
 
-function maskPII(value: string): string {
-  if (!value) return value;
-  if (value.length <= 4) return "****";
-  return value.slice(0, 2) + "****" + value.slice(-2);
+function maskId(id: string | undefined | null): string {
+  if (!id) return "<unknown>";
+  if (id.length <= 4) return "****";
+  return id.slice(0, 2) + "****" + id.slice(-2);
 }
 
 function sanitizeCommandInput(input: string): string {
-  if (typeof input !== "string") return "";
   // Remove null bytes and control characters
   return input.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").trim();
 }
@@ -38,7 +37,7 @@ export const handleHelpCommand: CommandHandler = async (params, allowTextCommand
   }
   if (!params.command.isAuthorizedSender) {
     logVerbose(
-      `Ignoring /help from unauthorized sender: ${params.command.senderId ? maskPII(params.command.senderId) : "<unknown>"}`,
+      `Ignoring /help from unauthorized sender: ${maskId(params.command.senderId)}`,
     );
     return { shouldContinue: false };
   }
@@ -58,7 +57,7 @@ export const handleCommandsListCommand: CommandHandler = async (params, allowTex
   }
   if (!params.command.isAuthorizedSender) {
     logVerbose(
-      `Ignoring /commands from unauthorized sender: ${params.command.senderId ? maskPII(params.command.senderId) : "<unknown>"}`,
+      `Ignoring /commands from unauthorized sender: ${maskId(params.command.senderId)}`,
     );
     return { shouldContinue: false };
   }
@@ -123,7 +122,7 @@ export const handleToolsCommand: CommandHandler = async (params, allowTextComman
   }
   if (!params.command.isAuthorizedSender) {
     logVerbose(
-      `Ignoring /tools from unauthorized sender: ${params.command.senderId ? maskPII(params.command.senderId) : "<unknown>"}`,
+      `Ignoring /tools from unauthorized sender: ${maskId(params.command.senderId)}`,
     );
     return { shouldContinue: false };
   }
@@ -192,7 +191,8 @@ export function buildCommandsPaginationKeyboard(
   agentId?: string,
 ): Array<Array<{ text: string; callback_data: string }>> {
   const buttons: Array<{ text: string; callback_data: string }> = [];
-  const suffix = agentId ? `:${agentId}` : "";
+  const sanitizedAgentId = agentId ? sanitizeCommandInput(agentId) : undefined;
+  const suffix = sanitizedAgentId ? `:${sanitizedAgentId}` : "";
 
   if (currentPage > 1) {
     buttons.push({
@@ -220,14 +220,15 @@ export const handleStatusCommand: CommandHandler = async (params, allowTextComma
   if (!allowTextCommands) {
     return null;
   }
+  const normalizedCommand = sanitizeCommandInput(params.command.commandBodyNormalized);
   const statusRequested =
-    params.directives.hasStatusDirective || sanitizeCommandInput(params.command.commandBodyNormalized) === "/status";
+    params.directives.hasStatusDirective || normalizedCommand === "/status";
   if (!statusRequested) {
     return null;
   }
   if (!params.command.isAuthorizedSender) {
     logVerbose(
-      `Ignoring /status from unauthorized sender: ${params.command.senderId ? maskPII(params.command.senderId) : "<unknown>"}`,
+      `Ignoring /status from unauthorized sender: ${maskId(params.command.senderId)}`,
     );
     return { shouldContinue: false };
   }
@@ -263,7 +264,7 @@ export const handleContextCommand: CommandHandler = async (params, allowTextComm
   }
   if (!params.command.isAuthorizedSender) {
     logVerbose(
-      `Ignoring /context from unauthorized sender: ${params.command.senderId ? maskPII(params.command.senderId) : "<unknown>"}`,
+      `Ignoring /context from unauthorized sender: ${maskId(params.command.senderId)}`,
     );
     return { shouldContinue: false };
   }
@@ -285,7 +286,7 @@ export const handleExportSessionCommand: CommandHandler = async (params, allowTe
   }
   if (!params.command.isAuthorizedSender) {
     logVerbose(
-      `Ignoring /export-session from unauthorized sender: ${params.command.senderId ? maskPII(params.command.senderId) : "<unknown>"}`,
+      `Ignoring /export-session from unauthorized sender: ${maskId(params.command.senderId)}`,
     );
     return { shouldContinue: false };
   }
@@ -302,7 +303,7 @@ export const handleWhoamiCommand: CommandHandler = async (params, allowTextComma
   }
   if (!params.command.isAuthorizedSender) {
     logVerbose(
-      `Ignoring /whoami from unauthorized sender: ${params.command.senderId ? maskPII(params.command.senderId) : "<unknown>"}`,
+      `Ignoring /whoami from unauthorized sender: ${maskId(params.command.senderId)}`,
     );
     return { shouldContinue: false };
   }
@@ -310,7 +311,7 @@ export const handleWhoamiCommand: CommandHandler = async (params, allowTextComma
   const senderUsername = params.ctx.SenderUsername ?? "";
   const lines = ["🧭 Identity", `Channel: ${params.command.channel}`];
   if (senderId) {
-    lines.push(`User id: ${maskPII(senderId)}`);
+    lines.push(`User id: ${senderId}`);
   }
   if (senderUsername) {
     const handle = senderUsername.startsWith("@") ? senderUsername : `@${senderUsername}`;
@@ -323,7 +324,7 @@ export const handleWhoamiCommand: CommandHandler = async (params, allowTextComma
     lines.push(`Thread: ${params.ctx.MessageThreadId}`);
   }
   if (senderId) {
-    lines.push(`AllowFrom: ${maskPII(senderId)}`);
+    lines.push(`AllowFrom: ${senderId}`);
   }
   return { shouldContinue: false, reply: { text: lines.join("\n") } };
 };
