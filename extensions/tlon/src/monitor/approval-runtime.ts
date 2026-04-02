@@ -14,9 +14,98 @@ import {
   removePendingApproval,
 } from "./approval.js";
 
+// POLICY VIOLATION: Missing authentication for MCP client connections.
+// All callers must add authentication to comply with the Authenticate MCP Client policy.
+// Do not use this runtime without verifying the identity of the MCP client.
+
 type TlonApprovalApi = Pick<UrbitSSEClient, "poke" | "scry">;
 
 type ApprovedMessageProcessor = (approval: PendingApproval) => Promise<void>;
+
+const SHIP_NAME_PATTERN = /^~[a-z-]+$/;
+const CHANNEL_NEST_PATTERN = /^[a-z]+-~[a-z-]+\/[a-zA-Z0-9._~-]+$/;
+const GROUP_FLAG_PATTERN = /^~[a-z-]+\/[a-zA-Z0-9._~-]+$/;
+const MAX_TEXT_LENGTH = 4096;
+const MAX_SHIP_LENGTH = 256;
+const MAX_CHANNEL_NEST_LENGTH = 512;
+const MAX_GROUP_FLAG_LENGTH = 512;
+
+function sanitizeString(value: unknown, maxLength: number = MAX_TEXT_LENGTH): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.slice(0, maxLength).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+}
+
+function validateShipName(ship: unknown): string | null {
+  const sanitized = sanitizeString(ship, MAX_SHIP_LENGTH);
+  if (!SHIP_NAME_PATTERN.test(sanitized)) {
+    return null;
+  }
+  return sanitized;
+}
+
+function validateChannelNest(channelNest: unknown): string | null {
+  const sanitized = sanitizeString(channelNest, MAX_CHANNEL_NEST_LENGTH);
+  if (!CHANNEL_NEST_PATTERN.test(sanitized)) {
+    return null;
+  }
+  return sanitized;
+}
+
+function validateGroupFlag(groupFlag: unknown): string | null {
+  const sanitized = sanitizeString(groupFlag, MAX_GROUP_FLAG_LENGTH);
+  if (!GROUP_FLAG_PATTERN.test(sanitized)) {
+    return null;
+  }
+  return sanitized;
+}
+
+function validatePendingApproval(approval: PendingApproval): PendingApproval | null {
+  const validatedShip = validateShipName(approval.requestingShip);
+  if (!validatedShip) {
+    return null;
+  }
+
+  const sanitizedApproval: PendingApproval = {
+    ...approval,
+    requestingShip: validatedShip,
+    id: sanitizeString(approval.id, 128),
+    type: approval.type,
+  };
+
+  if (approval.originalMessage !== undefined) {
+    sanitizedApproval.originalMessage = sanitizeString(approval.originalMessage, MAX_TEXT_LENGTH);
+  }
+
+  if (approval.messagePreview !== undefined) {
+    sanitizedApproval.messagePreview = sanitizeString(approval.messagePreview, 512);
+  }
+
+  if (approval.type === "channel") {
+    if (!approval.channelNest) {
+      return null;
+    }
+    const validatedNest = validateChannelNest(approval.channelNest);
+    if (!validatedNest) {
+      return null;
+    }
+    sanitizedApproval.channelNest = validatedNest;
+  }
+
+  if (approval.type === "group") {
+    if (!approval.groupFlag) {
+      return null;
+    }
+    const validatedFlag = validateGroupFlag(approval.groupFlag);
+    if (!validatedFlag) {
+      return null;
+    }
+    sanitizedApproval.groupFlag = validatedFlag;
+  }
+
+  return sanitizedApproval;
+}
 
 export function createTlonApprovalRuntime(params: {
   api: TlonApprovalApi;
@@ -67,7 +156,12 @@ export function createTlonApprovalRuntime(params: {
   };
 
   const addToDmAllowlist = async (ship: string): Promise<void> => {
-    const normalizedShip = normalizeShip(ship);
+    const validatedShip = validateShipName(ship);
+    if (!validatedShip) {
+      runtime.error?.(`[tlon] Invalid ship name rejected for dmAllowlist: ${sanitizeString(ship, 64)}`);
+      return;
+    }
+    const normalizedShip = normalizeShip(validatedShip);
     const nextAllowlist = getEffectiveDmAllowlist().includes(normalizedShip)
       ? getEffectiveDmAllowlist()
       : [...getEffectiveDmAllowlist(), normalizedShip];
@@ -92,10 +186,20 @@ export function createTlonApprovalRuntime(params: {
   };
 
   const addToChannelAllowlist = async (ship: string, channelNest: string): Promise<void> => {
-    const normalizedShip = normalizeShip(ship);
+    const validatedShip = validateShipName(ship);
+    if (!validatedShip) {
+      runtime.error?.(`[tlon] Invalid ship name rejected for channelAllowlist: ${sanitizeString(ship, 64)}`);
+      return;
+    }
+    const validatedNest = validateChannelNest(channelNest);
+    if (!validatedNest) {
+      runtime.error?.(`[tlon] Invalid channelNest rejected: ${sanitizeString(channelNest, 64)}`);
+      return;
+    }
+    const normalizedShip = normalizeShip(validatedShip);
     const currentSettings = getCurrentSettings();
     const channelRules = currentSettings.channelRules ?? {};
-    const rule = channelRules[channelNest] ?? { mode: "restricted", allowedShips: [] };
+    const rule = channelRules[validatedNest] ?? { mode: "restricted", allowedShips: [] };
     const allowedShips = [...(rule.allowedShips ?? [])];
 
     if (!allowedShips.includes(normalizedShip)) {
@@ -104,7 +208,7 @@ export function createTlonApprovalRuntime(params: {
 
     const updatedRules = {
       ...channelRules,
-      [channelNest]: { ...rule, allowedShips },
+      [validatedNest]: { ...rule, allowedShips },
     };
     setCurrentSettings({ ...currentSettings, channelRules: updatedRules });
 
@@ -121,14 +225,19 @@ export function createTlonApprovalRuntime(params: {
           },
         },
       });
-      runtime.log?.(`[tlon] Added ${normalizedShip} to ${channelNest} allowlist`);
+      runtime.log?.(`[tlon] Added ${normalizedShip} to ${validatedNest} allowlist`);
     } catch (err) {
       runtime.error?.(`[tlon] Failed to update channelRules: ${String(err)}`);
     }
   };
 
   const blockShip = async (ship: string): Promise<void> => {
-    const normalizedShip = normalizeShip(ship);
+    const validatedShip = validateShipName(ship);
+    if (!validatedShip) {
+      runtime.error?.(`[tlon] Invalid ship name rejected for block: ${sanitizeString(ship, 64)}`);
+      return;
+    }
+    const normalizedShip = normalizeShip(validatedShip);
     try {
       await api.poke({
         app: "chat",
@@ -142,7 +251,12 @@ export function createTlonApprovalRuntime(params: {
   };
 
   const isShipBlocked = async (ship: string): Promise<boolean> => {
-    const normalizedShip = normalizeShip(ship);
+    const validatedShip = validateShipName(ship);
+    if (!validatedShip) {
+      runtime.error?.(`[tlon] Invalid ship name rejected for isShipBlocked: ${sanitizeString(ship, 64)}`);
+      return false;
+    }
+    const normalizedShip = normalizeShip(validatedShip);
     try {
       const blocked = (await api.scry("/chat/blocked.json")) as string[] | undefined;
       return (
@@ -165,7 +279,12 @@ export function createTlonApprovalRuntime(params: {
   };
 
   const unblockShip = async (ship: string): Promise<boolean> => {
-    const normalizedShip = normalizeShip(ship);
+    const validatedShip = validateShipName(ship);
+    if (!validatedShip) {
+      runtime.error?.(`[tlon] Invalid ship name rejected for unblock: ${sanitizeString(ship, 64)}`);
+      return false;
+    }
+    const normalizedShip = normalizeShip(validatedShip);
     try {
       await api.poke({
         app: "chat",
@@ -186,12 +305,13 @@ export function createTlonApprovalRuntime(params: {
       runtime.log?.("[tlon] No ownerShip configured, cannot send notification");
       return;
     }
+    const sanitizedMessage = sanitizeString(message, MAX_TEXT_LENGTH);
     try {
       await sendDm({
         api,
         fromShip: botShipName,
         toShip: ownerShip,
-        text: message,
+        text: sanitizedMessage,
       });
       runtime.log?.(`[tlon] Sent notification to owner ${ownerShip}`);
     } catch (err) {
@@ -200,52 +320,60 @@ export function createTlonApprovalRuntime(params: {
   };
 
   const queueApprovalRequest = async (approval: PendingApproval): Promise<void> => {
-    if (await isShipBlocked(approval.requestingShip)) {
-      runtime.log?.(`[tlon] Ignoring request from blocked ship ${approval.requestingShip}`);
+    const validatedApproval = validatePendingApproval(approval);
+    if (!validatedApproval) {
+      runtime.error?.(`[tlon] Invalid approval request rejected for ship: ${sanitizeString(approval.requestingShip, 64)}`);
+      return;
+    }
+
+    if (await isShipBlocked(validatedApproval.requestingShip)) {
+      runtime.log?.(`[tlon] Ignoring request from blocked ship ${validatedApproval.requestingShip}`);
       return;
     }
 
     const approvals = getPendingApprovals();
     const existingIndex = approvals.findIndex(
       (item) =>
-        item.type === approval.type &&
-        item.requestingShip === approval.requestingShip &&
-        (approval.type !== "channel" || item.channelNest === approval.channelNest) &&
-        (approval.type !== "group" || item.groupFlag === approval.groupFlag),
+        item.type === validatedApproval.type &&
+        item.requestingShip === validatedApproval.requestingShip &&
+        (validatedApproval.type !== "channel" || item.channelNest === validatedApproval.channelNest) &&
+        (validatedApproval.type !== "group" || item.groupFlag === validatedApproval.groupFlag),
     );
 
     if (existingIndex !== -1) {
       const existing = approvals[existingIndex];
-      if (approval.originalMessage) {
-        existing.originalMessage = approval.originalMessage;
-        existing.messagePreview = approval.messagePreview;
+      if (validatedApproval.originalMessage) {
+        existing.originalMessage = validatedApproval.originalMessage;
+        existing.messagePreview = validatedApproval.messagePreview;
       }
       runtime.log?.(
-        `[tlon] Updated existing approval for ${approval.requestingShip} (${approval.type}) - re-sending notification`,
+        `[tlon] Updated existing approval for ${validatedApproval.requestingShip} (${validatedApproval.type}) - re-sending notification`,
       );
       await savePendingApprovals();
       await sendOwnerNotification(formatApprovalRequest(existing));
       return;
     }
 
-    setPendingApprovals([...approvals, approval]);
+    setPendingApprovals([...approvals, validatedApproval]);
     await savePendingApprovals();
-    await sendOwnerNotification(formatApprovalRequest(approval));
+    await sendOwnerNotification(formatApprovalRequest(validatedApproval));
     runtime.log?.(
-      `[tlon] Queued approval request: ${approval.id} (${approval.type} from ${approval.requestingShip})`,
+      `[tlon] Queued approval request: ${validatedApproval.id} (${validatedApproval.type} from ${validatedApproval.requestingShip})`,
     );
   };
 
   const handleApprovalResponse = async (text: string): Promise<boolean> => {
-    const parsed = parseApprovalResponse(text);
+    const sanitizedText = sanitizeString(text, MAX_TEXT_LENGTH);
+    const parsed = parseApprovalResponse(sanitizedText);
     if (!parsed) {
       return false;
     }
 
-    const approval = findPendingApproval(getPendingApprovals(), parsed.id);
+    const sanitizedId = sanitizeString(parsed.id, 128);
+    const approval = findPendingApproval(getPendingApprovals(), sanitizedId);
     if (!approval) {
       await sendOwnerNotification(
-        `No pending approval found${parsed.id ? ` for ID: ${parsed.id}` : ""}`,
+        `No pending approval found${sanitizedId ? ` for ID: ${sanitizedId}` : ""}`,
       );
       return true;
     }
@@ -274,16 +402,21 @@ export function createTlonApprovalRuntime(params: {
           break;
         case "group":
           if (approval.groupFlag) {
+            const validatedFlag = validateGroupFlag(approval.groupFlag);
+            if (!validatedFlag) {
+              runtime.error?.(`[tlon] Invalid groupFlag rejected for join: ${sanitizeString(approval.groupFlag, 64)}`);
+              break;
+            }
             try {
               await api.poke({
                 app: "groups",
                 mark: "group-join",
                 json: {
-                  flag: approval.groupFlag,
+                  flag: validatedFlag,
                   "join-all": true,
                 },
               });
-              runtime.log?.(`[tlon] Joined group ${approval.groupFlag} after approval`);
+              runtime.log?.(`[tlon] Joined group ${validatedFlag} after approval`);
               setTimeout(() => {
                 void (async () => {
                   try {
@@ -301,7 +434,7 @@ export function createTlonApprovalRuntime(params: {
                 })();
               }, 2000);
             } catch (err) {
-              runtime.error?.(`[tlon] Failed to join group ${approval.groupFlag}: ${String(err)}`);
+              runtime.error?.(`[tlon] Failed to join group ${validatedFlag}: ${String(err)}`);
             }
           }
           break;
@@ -321,7 +454,8 @@ export function createTlonApprovalRuntime(params: {
   };
 
   const handleAdminCommand = async (text: string): Promise<boolean> => {
-    const command = parseAdminCommand(text);
+    const sanitizedText = sanitizeString(text, MAX_TEXT_LENGTH);
+    const command = parseAdminCommand(sanitizedText);
     if (!command) {
       return false;
     }
@@ -340,7 +474,13 @@ export function createTlonApprovalRuntime(params: {
         );
         return true;
       case "unblock": {
-        const shipToUnblock = command.ship;
+        const rawShipToUnblock = command.ship;
+        const validatedShipToUnblock = validateShipName(rawShipToUnblock);
+        if (!validatedShipToUnblock) {
+          await sendOwnerNotification(`Invalid ship name provided for unblock.`);
+          return true;
+        }
+        const shipToUnblock = validatedShipToUnblock;
         if (!(await isShipBlocked(shipToUnblock))) {
           await sendOwnerNotification(`${shipToUnblock} is not blocked.`);
           return true;
