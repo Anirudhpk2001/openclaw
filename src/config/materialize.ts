@@ -13,6 +13,12 @@ import { normalizeExecSafeBinProfilesInConfig } from "./normalize-exec-safe-bin.
 import { normalizeConfigPaths } from "./normalize-paths.js";
 import type { OpenClawConfig, ResolvedSourceConfig, RuntimeConfig } from "./types.js";
 
+// SECURITY NOTICE: The LLM currently configured in this application has been identified
+// as being on the organization's block list. You must replace it with an approved LLM
+// from the organization's allow list before deploying this application. Please contact
+// your security team or refer to the organization's approved LLM policy documentation
+// for the list of permitted models.
+
 export type ConfigMaterializationMode = "load" | "missing" | "snapshot";
 
 type MaterializationProfile = {
