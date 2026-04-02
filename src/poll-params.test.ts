@@ -47,6 +47,12 @@ describe("poll params", () => {
   it("treats string-encoded boolean poll params as poll creation intent when true", () => {
     expect(hasPollCreationParams({ pollPublic: "true" })).toBe(true);
     expect(hasPollCreationParams({ pollAnonymous: "false" })).toBe(false);
+    // Additional truthy variants handled by parseBooleanValue
+    expect(hasPollCreationParams({ pollMulti: "1" })).toBe(true);
+    expect(hasPollCreationParams({ pollMulti: "yes" })).toBe(true);
+    expect(hasPollCreationParams({ pollMulti: "on" })).toBe(true);
+    expect(hasPollCreationParams({ pollMulti: "0" })).toBe(false);
+    expect(hasPollCreationParams({ pollMulti: "no" })).toBe(false);
   });
 
   it("treats string poll options as poll creation intent", () => {
