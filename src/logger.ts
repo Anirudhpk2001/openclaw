@@ -88,6 +88,13 @@ export function logError(message: string, runtime: RuntimeEnv = defaultRuntime) 
 }
 
 export function logDebug(message: string) {
+  // Route subsystem-prefixed messages (e.g. "matrix: foo") to the correct
+  // subsystem logger so debug output is grouped consistently with other levels.
+  const parsed = splitSubsystem(message);
+  if (parsed) {
+    createSubsystemLogger(parsed.subsystem).debug(parsed.rest);
+    return;
+  }
   // Always emit to file logger (level-filtered); console only when verbose.
   getLogger().debug(message);
   if (isVerbose()) {
