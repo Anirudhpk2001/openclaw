@@ -100,6 +100,103 @@ function normalizeAllowedModelRef(raw: string): string | null {
   return `${normalized.provider}/${normalized.model}`;
 }
 
+// ── Input sanitization helpers ──────────────────────────────────────
+
+const MAX_SESSION_KEY_LENGTH = 512;
+const MAX_MESSAGE_LENGTH = 1_000_000;
+const MAX_EXTRA_SYSTEM_PROMPT_LENGTH = 100_000;
+const MAX_LANE_LENGTH = 256;
+const MAX_IDEMPOTENCY_KEY_LENGTH = 256;
+const MAX_RUN_ID_LENGTH = 256;
+const MAX_METHOD_LENGTH = 256;
+const MAX_PLUGIN_ID_LENGTH = 256;
+const MAX_PROVIDER_LENGTH = 256;
+const MAX_MODEL_LENGTH = 256;
+const MAX_TIMEOUT_MS = 600_000;
+const MIN_TIMEOUT_MS = 0;
+const MAX_LIMIT = 10_000;
+
+function sanitizeString(value: unknown, maxLength: number): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (trimmed.length > maxLength) {
+    return trimmed.slice(0, maxLength);
+  }
+  return trimmed;
+}
+
+function sanitizePositiveInteger(value: unknown, min: number, max: number): number | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
+    return undefined;
+  }
+  if (value < min) {
+    return min;
+  }
+  if (value > max) {
+    return max;
+  }
+  return value;
+}
+
+function sanitizeBoolean(value: unknown): boolean {
+  return value === true;
+}
+
+function sanitizeSubagentRunParams(params: {
+  sessionKey?: unknown;
+  message?: unknown;
+  deliver?: unknown;
+  provider?: unknown;
+  model?: unknown;
+  extraSystemPrompt?: unknown;
+  lane?: unknown;
+  idempotencyKey?: unknown;
+}): {
+  sessionKey: string | undefined;
+  message: string | undefined;
+  deliver: boolean;
+  provider: string | undefined;
+  model: string | undefined;
+  extraSystemPrompt: string | undefined;
+  lane: string | undefined;
+  idempotencyKey: string | undefined;
+} {
+  return {
+    sessionKey: sanitizeString(params.sessionKey, MAX_SESSION_KEY_LENGTH),
+    message: sanitizeString(params.message, MAX_MESSAGE_LENGTH),
+    deliver: sanitizeBoolean(params.deliver),
+    provider: sanitizeString(params.provider, MAX_PROVIDER_LENGTH),
+    model: sanitizeString(params.model, MAX_MODEL_LENGTH),
+    extraSystemPrompt: sanitizeString(params.extraSystemPrompt, MAX_EXTRA_SYSTEM_PROMPT_LENGTH),
+    lane: sanitizeString(params.lane, MAX_LANE_LENGTH),
+    idempotencyKey: sanitizeString(params.idempotencyKey, MAX_IDEMPOTENCY_KEY_LENGTH),
+  };
+}
+
+function sanitizeMethodName(method: unknown): string {
+  const sanitized = sanitizeString(method, MAX_METHOD_LENGTH);
+  if (!sanitized) {
+    throw new Error("Invalid or missing gateway method name.");
+  }
+  if (!/^[a-zA-Z0-9._-]+$/.test(sanitized)) {
+    throw new Error(`Gateway method name contains invalid characters: "${sanitized}"`);
+  }
+  return sanitized;
+}
+
+// ── End input sanitization helpers ─────────────────────────────────
+
 export function setPluginSubagentOverridePolicies(cfg: ReturnType<typeof loadConfig>): void {
   const pluginSubagentPolicyState = getPluginSubagentPolicyState();
   const normalized = normalizePluginsConfig(cfg.plugins);
@@ -145,7 +242,7 @@ function authorizeFallbackModelOverride(params: {
   model?: string;
 }): { allowed: true } | { allowed: false; reason: string } {
   const pluginSubagentPolicyState = getPluginSubagentPolicyState();
-  const pluginId = params.pluginId?.trim();
+  const pluginId = sanitizeString(params.pluginId, MAX_PLUGIN_ID_LENGTH);
   if (!pluginId) {
     return {
       allowed: false,
@@ -195,11 +292,13 @@ function resolveRequestedFallbackModelRef(params: {
   provider?: string;
   model?: string;
 }): string | null {
-  if (params.provider && params.model) {
-    const normalizedRequest = normalizeModelRef(params.provider, params.model);
+  const provider = sanitizeString(params.provider, MAX_PROVIDER_LENGTH);
+  const model = sanitizeString(params.model, MAX_MODEL_LENGTH);
+  if (provider && model) {
+    const normalizedRequest = normalizeModelRef(provider, model);
     return `${normalizedRequest.provider}/${normalizedRequest.model}`;
   }
-  const rawModel = params.model?.trim();
+  const rawModel = model;
   if (!rawModel || !rawModel.includes("/")) {
     return null;
   }
@@ -252,12 +351,13 @@ async function dispatchGatewayMethod<T>(
     syntheticScopes?: string[];
   },
 ): Promise<T> {
+  const sanitizedMethod = sanitizeMethodName(method);
   const scope = getPluginRuntimeGatewayRequestScope();
   const context = scope?.context ?? getFallbackGatewayContext();
   const isWebchatConnect = scope?.isWebchatConnect ?? (() => false);
   if (!context) {
     throw new Error(
-      `Plugin subagent dispatch requires a gateway request scope (method: ${method}). No scope set and no fallback context available.`,
+      `Plugin subagent dispatch requires a gateway request scope (method: ${sanitizedMethod}). No scope set and no fallback context available.`,
     );
   }
 
@@ -266,7 +366,7 @@ async function dispatchGatewayMethod<T>(
     req: {
       type: "req",
       id: `plugin-subagent-${randomUUID()}`,
-      method,
+      method: sanitizedMethod,
       params,
     },
     client:
@@ -285,35 +385,38 @@ async function dispatchGatewayMethod<T>(
   });
 
   if (!result) {
-    throw new Error(`Gateway method "${method}" completed without a response.`);
+    throw new Error(`Gateway method "${sanitizedMethod}" completed without a response.`);
   }
   if (!result.ok) {
-    throw new Error(result.error?.message ?? `Gateway method "${method}" failed.`);
+    throw new Error(result.error?.message ?? `Gateway method "${sanitizedMethod}" failed.`);
   }
   return result.payload as T;
 }
 
 export function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
   const getSessionMessages: PluginRuntime["subagent"]["getSessionMessages"] = async (params) => {
+    const sessionKey = sanitizeString(params.sessionKey, MAX_SESSION_KEY_LENGTH);
+    const limit = sanitizePositiveInteger(params.limit, 1, MAX_LIMIT);
     const payload = await dispatchGatewayMethod<{ messages?: unknown[] }>("sessions.get", {
-      key: params.sessionKey,
-      ...(params.limit != null && { limit: params.limit }),
+      key: sessionKey,
+      ...(limit != null && { limit }),
     });
     return { messages: Array.isArray(payload?.messages) ? payload.messages : [] };
   };
 
   return {
     async run(params) {
+      const sanitized = sanitizeSubagentRunParams(params);
       const scope = getPluginRuntimeGatewayRequestScope();
-      const overrideRequested = Boolean(params.provider || params.model);
+      const overrideRequested = Boolean(sanitized.provider || sanitized.model);
       const hasRequestScopeClient = Boolean(scope?.client);
       let allowOverride = hasRequestScopeClient && canClientUseModelOverride(scope?.client ?? null);
       let allowSyntheticModelOverride = false;
       if (overrideRequested && !allowOverride && !hasRequestScopeClient) {
         const fallbackAuth = authorizeFallbackModelOverride({
           pluginId: scope?.pluginId,
-          provider: params.provider,
-          model: params.model,
+          provider: sanitized.provider,
+          model: sanitized.model,
         });
         if (!fallbackAuth.allowed) {
           throw new Error(fallbackAuth.reason);
@@ -327,14 +430,14 @@ export function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
       const payload = await dispatchGatewayMethod<{ runId?: string }>(
         "agent",
         {
-          sessionKey: params.sessionKey,
-          message: params.message,
-          deliver: params.deliver ?? false,
-          ...(allowOverride && params.provider && { provider: params.provider }),
-          ...(allowOverride && params.model && { model: params.model }),
-          ...(params.extraSystemPrompt && { extraSystemPrompt: params.extraSystemPrompt }),
-          ...(params.lane && { lane: params.lane }),
-          ...(params.idempotencyKey && { idempotencyKey: params.idempotencyKey }),
+          sessionKey: sanitized.sessionKey,
+          message: sanitized.message,
+          deliver: sanitized.deliver,
+          ...(allowOverride && sanitized.provider && { provider: sanitized.provider }),
+          ...(allowOverride && sanitized.model && { model: sanitized.model }),
+          ...(sanitized.extraSystemPrompt && { extraSystemPrompt: sanitized.extraSystemPrompt }),
+          ...(sanitized.lane && { lane: sanitized.lane }),
+          ...(sanitized.idempotencyKey && { idempotencyKey: sanitized.idempotencyKey }),
         },
         {
           allowSyntheticModelOverride,
@@ -347,11 +450,16 @@ export function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
       return { runId };
     },
     async waitForRun(params) {
+      const runId = sanitizeString(params.runId, MAX_RUN_ID_LENGTH);
+      if (!runId) {
+        throw new Error("waitForRun requires a valid runId.");
+      }
+      const timeoutMs = sanitizePositiveInteger(params.timeoutMs, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS);
       const payload = await dispatchGatewayMethod<{ status?: string; error?: string }>(
         "agent.wait",
         {
-          runId: params.runId,
-          ...(params.timeoutMs != null && { timeoutMs: params.timeoutMs }),
+          runId,
+          ...(timeoutMs != null && { timeoutMs }),
         },
       );
       const status = payload?.status;
@@ -368,9 +476,10 @@ export function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
       return getSessionMessages(params);
     },
     async deleteSession(params) {
+      const sessionKey = sanitizeString(params.sessionKey, MAX_SESSION_KEY_LENGTH);
       await dispatchGatewayMethod("sessions.delete", {
-        key: params.sessionKey,
-        deleteTranscript: params.deleteTranscript ?? true,
+        key: sessionKey,
+        deleteTranscript: sanitizeBoolean(params.deleteTranscript ?? true),
       });
     },
   };
