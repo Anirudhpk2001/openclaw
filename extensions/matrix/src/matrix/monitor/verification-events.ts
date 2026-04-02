@@ -13,6 +13,15 @@ import {
 const MAX_TRACKED_VERIFICATION_EVENTS = 1024;
 const SAS_NOTICE_RETRY_DELAY_MS = 750;
 const VERIFICATION_EVENT_STARTUP_GRACE_MS = 30_000;
+const MAX_STRING_LENGTH = 2048;
+const MAX_NOTICE_BODY_LENGTH = 4096;
+const MAX_SENDER_ID_LENGTH = 255;
+const MAX_ROOM_ID_LENGTH = 255;
+const MAX_FLOW_ID_LENGTH = 255;
+const MAX_SAS_EMOJI_COUNT = 8;
+const MAX_SAS_EMOJI_STRING_LENGTH = 64;
+const MAX_CANCEL_CODE_LENGTH = 128;
+const MAX_CANCEL_REASON_LENGTH = 512;
 
 type MatrixVerificationStage = "request" | "ready" | "start" | "cancel" | "done" | "other";
 
@@ -40,27 +49,93 @@ function trimMaybeString(input: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function sanitizeString(input: unknown, maxLength: number = MAX_STRING_LENGTH): string | null {
+  const trimmed = trimMaybeString(input);
+  if (trimmed === null) {
+    return null;
+  }
+  // Remove control characters except for newline (used in multi-line notices)
+  const sanitized = trimmed.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+  if (sanitized.length === 0) {
+    return null;
+  }
+  return sanitized.length > maxLength ? sanitized.slice(0, maxLength) : sanitized;
+}
+
+function sanitizeSenderId(input: unknown): string | null {
+  const value = sanitizeString(input, MAX_SENDER_ID_LENGTH);
+  if (value === null) {
+    return null;
+  }
+  // Matrix user IDs must start with @ and contain a colon
+  if (!value.startsWith("@") || !value.includes(":")) {
+    return null;
+  }
+  // Only allow printable ASCII characters in user IDs
+  if (!/^[@a-zA-Z0-9._=\-/+:]+$/.test(value)) {
+    return null;
+  }
+  return value;
+}
+
+function sanitizeRoomId(input: unknown): string | null {
+  const value = sanitizeString(input, MAX_ROOM_ID_LENGTH);
+  if (value === null) {
+    return null;
+  }
+  // Matrix room IDs must start with ! and contain a colon
+  if (!value.startsWith("!") || !value.includes(":")) {
+    return null;
+  }
+  // Only allow printable ASCII characters in room IDs
+  if (!/^[!a-zA-Z0-9._=\-/+:]+$/.test(value)) {
+    return null;
+  }
+  return value;
+}
+
+function sanitizeFlowId(input: unknown): string | null {
+  return sanitizeString(input, MAX_FLOW_ID_LENGTH);
+}
+
+function sanitizeEventId(input: unknown): string | null {
+  const value = sanitizeString(input, MAX_FLOW_ID_LENGTH);
+  if (value === null) {
+    return null;
+  }
+  // Matrix event IDs start with $ or are opaque strings
+  return value;
+}
+
+function sanitizeNoticeBody(body: string): string {
+  // Remove control characters except newline
+  const sanitized = body.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+  return sanitized.length > MAX_NOTICE_BODY_LENGTH
+    ? sanitized.slice(0, MAX_NOTICE_BODY_LENGTH)
+    : sanitized;
+}
+
 function readVerificationSignal(event: MatrixRawEvent): {
   stage: MatrixVerificationStage;
   flowId: string | null;
 } | null {
-  const type = trimMaybeString(event?.type) ?? "";
+  const type = sanitizeString(event?.type) ?? "";
   const content = event?.content ?? {};
-  const msgtype = trimMaybeString((content as { msgtype?: unknown }).msgtype) ?? "";
-  const relatedEventId = trimMaybeString(
+  const msgtype = sanitizeString((content as { msgtype?: unknown }).msgtype) ?? "";
+  const relatedEventId = sanitizeFlowId(
     (content as { "m.relates_to"?: { event_id?: unknown } })["m.relates_to"]?.event_id,
   );
-  const transactionId = trimMaybeString((content as { transaction_id?: unknown }).transaction_id);
+  const transactionId = sanitizeFlowId((content as { transaction_id?: unknown }).transaction_id);
   if (type === EventType.RoomMessage && isMatrixVerificationRequestMsgType(msgtype)) {
     return {
       stage: "request",
-      flowId: trimMaybeString(event.event_id) ?? transactionId ?? relatedEventId,
+      flowId: sanitizeEventId(event.event_id) ?? transactionId ?? relatedEventId,
     };
   }
   if (!isMatrixVerificationEventType(type)) {
     return null;
   }
-  const flowId = transactionId ?? relatedEventId ?? trimMaybeString(event.event_id);
+  const flowId = transactionId ?? relatedEventId ?? sanitizeEventId(event.event_id);
   if (type === `${matrixVerificationConstants.eventPrefix}request`) {
     return { stage: "request", flowId };
   }
@@ -85,26 +160,35 @@ function formatVerificationStageNotice(params: {
   event: MatrixRawEvent;
 }): string | null {
   const { stage, senderId, event } = params;
+  const sanitizedSenderId = sanitizeSenderId(senderId) ?? sanitizeString(senderId) ?? "unknown";
   const content = event.content as { code?: unknown; reason?: unknown };
   switch (stage) {
     case "request":
-      return `Matrix verification request received from ${senderId}. Open "Verify by emoji" in your Matrix client to continue.`;
+      return sanitizeNoticeBody(
+        `Matrix verification request received from ${sanitizedSenderId}. Open "Verify by emoji" in your Matrix client to continue.`,
+      );
     case "ready":
-      return `Matrix verification is ready with ${senderId}. Choose "Verify by emoji" to reveal the emoji sequence.`;
+      return sanitizeNoticeBody(
+        `Matrix verification is ready with ${sanitizedSenderId}. Choose "Verify by emoji" to reveal the emoji sequence.`,
+      );
     case "start":
-      return `Matrix verification started with ${senderId}.`;
+      return sanitizeNoticeBody(`Matrix verification started with ${sanitizedSenderId}.`);
     case "done":
-      return `Matrix verification completed with ${senderId}.`;
+      return sanitizeNoticeBody(`Matrix verification completed with ${sanitizedSenderId}.`);
     case "cancel": {
-      const code = trimMaybeString(content.code);
-      const reason = trimMaybeString(content.reason);
+      const code = sanitizeString(content.code, MAX_CANCEL_CODE_LENGTH);
+      const reason = sanitizeString(content.reason, MAX_CANCEL_REASON_LENGTH);
       if (code && reason) {
-        return `Matrix verification cancelled by ${senderId} (${code}: ${reason}).`;
+        return sanitizeNoticeBody(
+          `Matrix verification cancelled by ${sanitizedSenderId} (${code}: ${reason}).`,
+        );
       }
       if (reason) {
-        return `Matrix verification cancelled by ${senderId} (${reason}).`;
+        return sanitizeNoticeBody(
+          `Matrix verification cancelled by ${sanitizedSenderId} (${reason}).`,
+        );
       }
-      return `Matrix verification cancelled by ${senderId}.`;
+      return sanitizeNoticeBody(`Matrix verification cancelled by ${sanitizedSenderId}.`);
     }
     default:
       return null;
@@ -116,22 +200,50 @@ function formatVerificationSasNotice(summary: MatrixVerificationSummaryLike): st
   if (!sas) {
     return null;
   }
+  const sanitizedOtherUserId =
+    sanitizeSenderId(summary.otherUserId) ??
+    sanitizeString(summary.otherUserId) ??
+    "unknown";
   const emojiLine =
     Array.isArray(sas.emoji) && sas.emoji.length > 0
-      ? `SAS emoji: ${sas.emoji
-          .map(
-            ([emoji, name]) => `${trimMaybeString(emoji) ?? "?"} ${trimMaybeString(name) ?? "?"}`,
-          )
-          .join(" | ")}`
+      ? (() => {
+          const limitedEmoji = sas.emoji.slice(0, MAX_SAS_EMOJI_COUNT);
+          const validEmoji = limitedEmoji.filter(
+            (entry) => Array.isArray(entry) && entry.length === 2,
+          );
+          if (validEmoji.length === 0) {
+            return null;
+          }
+          return `SAS emoji: ${validEmoji
+            .map(([emoji, name]) => {
+              const sanitizedEmoji = sanitizeString(emoji, MAX_SAS_EMOJI_STRING_LENGTH) ?? "?";
+              const sanitizedName = sanitizeString(name, MAX_SAS_EMOJI_STRING_LENGTH) ?? "?";
+              return `${sanitizedEmoji} ${sanitizedName}`;
+            })
+            .join(" | ")}`;
+        })()
       : null;
   const decimalLine =
     Array.isArray(sas.decimal) && sas.decimal.length === 3
-      ? `SAS decimal: ${sas.decimal.join(" ")}`
+      ? (() => {
+          const [a, b, c] = sas.decimal;
+          if (
+            typeof a !== "number" ||
+            typeof b !== "number" ||
+            typeof c !== "number" ||
+            !Number.isFinite(a) ||
+            !Number.isFinite(b) ||
+            !Number.isFinite(c)
+          ) {
+            return null;
+          }
+          return `SAS decimal: ${Math.floor(a)} ${Math.floor(b)} ${Math.floor(c)}`;
+        })()
       : null;
   if (!emojiLine && !decimalLine) {
     return null;
   }
-  const lines = [`Matrix verification SAS with ${summary.otherUserId}:`];
+  const lines = [`Matrix verification SAS with ${sanitizedOtherUserId}:`];
   if (emojiLine) {
     lines.push(emojiLine);
   }
@@ -139,7 +251,7 @@ function formatVerificationSasNotice(summary: MatrixVerificationSummaryLike): st
     lines.push(decimalLine);
   }
   lines.push("If both sides match, choose 'They match' in your Matrix app.");
-  return lines.join("\n");
+  return sanitizeNoticeBody(lines.join("\n"));
 }
 
 function resolveVerificationFlowCandidates(params: {
@@ -153,7 +265,7 @@ function resolveVerificationFlowCandidates(params: {
   };
   const candidates = new Set<string>();
   const add = (value: unknown) => {
-    const normalized = trimMaybeString(value);
+    const normalized = sanitizeFlowId(value);
     if (normalized) {
       candidates.add(normalized);
     }
@@ -195,10 +307,15 @@ async function resolveVerificationSummaryForSignal(
   if (!client.crypto) {
     return null;
   }
+  const sanitizedRoomId = sanitizeRoomId(params.roomId);
+  const sanitizedSenderId = sanitizeSenderId(params.senderId);
+  if (!sanitizedRoomId || !sanitizedSenderId) {
+    return null;
+  }
   await client.crypto
     .ensureVerificationDmTracked({
-      roomId: params.roomId,
-      userId: params.senderId,
+      roomId: sanitizedRoomId,
+      userId: sanitizedSenderId,
     })
     .catch(() => null);
   const list = await client.crypto.listVerifications();
@@ -221,18 +338,18 @@ async function resolveVerificationSummaryForSignal(
   // prompt into that room.
   const inspection = await inspectMatrixDirectRooms({
     client,
-    remoteUserId: params.senderId,
+    remoteUserId: sanitizedSenderId,
   }).catch(() => null);
-  const activeRoomId = trimMaybeString(inspection?.activeRoomId);
+  const activeRoomId = sanitizeRoomId(inspection?.activeRoomId);
   if (activeRoomId) {
-    if (activeRoomId !== params.roomId) {
+    if (activeRoomId !== sanitizedRoomId) {
       return null;
     }
   } else if (
     !(await isStrictDirectRoom({
       client,
-      roomId: params.roomId,
-      remoteUserId: params.senderId,
+      roomId: sanitizedRoomId,
+      remoteUserId: sanitizedSenderId,
     }))
   ) {
     // If we cannot determine a canonical active DM, preserve the older
@@ -243,11 +360,13 @@ async function resolveVerificationSummaryForSignal(
 
   // Fallback for DM flows where transaction IDs do not match room event IDs consistently.
   const activeByUser = list
-    .filter((entry) => entry.otherUserId === params.senderId && isActiveVerificationSummary(entry))
+    .filter(
+      (entry) => entry.otherUserId === sanitizedSenderId && isActiveVerificationSummary(entry),
+    )
     .sort((a, b) => resolveSummaryRecency(b) - resolveSummaryRecency(a));
   const activeInRoom = activeByUser.filter((entry) => {
-    const roomId = trimMaybeString(entry.roomId);
-    return roomId === params.roomId;
+    const roomId = sanitizeRoomId(entry.roomId);
+    return roomId === sanitizedRoomId;
   });
   if (activeInRoom.length > 0) {
     return activeInRoom[0] ?? null;
@@ -306,14 +425,18 @@ async function sendVerificationNotice(params: {
   body: string;
   logVerboseMessage: (message: string) => void;
 }): Promise<void> {
-  const roomId = trimMaybeString(params.roomId);
+  const roomId = sanitizeRoomId(params.roomId);
   if (!roomId) {
+    return;
+  }
+  const sanitizedBody = sanitizeNoticeBody(params.body);
+  if (!sanitizedBody) {
     return;
   }
   try {
     await params.client.sendMessage(roomId, {
       msgtype: "m.notice",
-      body: params.body,
+      body: sanitizedBody,
     });
   } catch (err) {
     params.logVerboseMessage(
@@ -377,11 +500,15 @@ export function createMatrixVerificationEventRouter(params: {
   const verificationUserRooms = new Map<string, string>();
 
   async function resolveActiveDirectRoomId(remoteUserId: string): Promise<string | null> {
+    const sanitizedUserId = sanitizeSenderId(remoteUserId);
+    if (!sanitizedUserId) {
+      return null;
+    }
     const inspection = await inspectMatrixDirectRooms({
       client: params.client,
-      remoteUserId,
+      remoteUserId: sanitizedUserId,
     }).catch(() => null);
-    return trimMaybeString(inspection?.activeRoomId);
+    return sanitizeRoomId(inspection?.activeRoomId);
   }
 
   function shouldEmitVerificationEventNotice(event: MatrixRawEvent): boolean {
@@ -396,8 +523,12 @@ export function createMatrixVerificationEventRouter(params: {
   }
 
   function rememberVerificationRoom(roomId: string, event: MatrixRawEvent, flowId: string | null) {
+    const sanitizedRoomId = sanitizeRoomId(roomId);
+    if (!sanitizedRoomId) {
+      return;
+    }
     for (const candidate of resolveVerificationFlowCandidates({ event, flowId })) {
-      verificationFlowRooms.set(candidate, roomId);
+      verificationFlowRooms.set(candidate, sanitizedRoomId);
       if (verificationFlowRooms.size > MAX_TRACKED_VERIFICATION_EVENTS) {
         const oldest = verificationFlowRooms.keys().next().value;
         if (typeof oldest === "string") {
@@ -408,8 +539,8 @@ export function createMatrixVerificationEventRouter(params: {
   }
 
   function rememberVerificationUserRoom(remoteUserId: string, roomId: string): void {
-    const normalizedUserId = trimMaybeString(remoteUserId);
-    const normalizedRoomId = trimMaybeString(roomId);
+    const normalizedUserId = sanitizeSenderId(remoteUserId);
+    const normalizedRoomId = sanitizeRoomId(roomId);
     if (!normalizedUserId || !normalizedRoomId) {
       return;
     }
@@ -427,20 +558,20 @@ export function createMatrixVerificationEventRouter(params: {
     summary: MatrixVerificationSummaryLike,
   ): Promise<string | null> {
     const mappedRoomId =
-      trimMaybeString(summary.roomId) ??
-      trimMaybeString(
+      sanitizeRoomId(summary.roomId) ??
+      sanitizeRoomId(
         summary.transactionId ? verificationFlowRooms.get(summary.transactionId) : null,
       ) ??
-      trimMaybeString(verificationFlowRooms.get(summary.id));
+      sanitizeRoomId(verificationFlowRooms.get(summary.id));
     if (mappedRoomId) {
       return mappedRoomId;
     }
 
-    const remoteUserId = trimMaybeString(summary.otherUserId);
+    const remoteUserId = sanitizeSenderId(summary.otherUserId);
     if (!remoteUserId) {
       return null;
     }
-    const recentRoomId = trimMaybeString(verificationUserRooms.get(remoteUserId));
+    const recentRoomId = sanitizeRoomId(verificationUserRooms.get(remoteUserId));
     const activeRoomId = await resolveActiveDirectRoomId(remoteUserId);
     if (recentRoomId && activeRoomId && recentRoomId === activeRoomId) {
       return recentRoomId;
@@ -466,21 +597,28 @@ export function createMatrixVerificationEventRouter(params: {
     if (!roomId || !isActiveVerificationSummary(summary)) {
       return;
     }
+    const sanitizedOtherUserId = sanitizeSenderId(summary.otherUserId);
+    if (!sanitizedOtherUserId) {
+      params.logVerboseMessage(
+        `matrix: ignoring verification summary with invalid otherUserId room=${roomId}`,
+      );
+      return;
+    }
     if (
       !(await isStrictDirectRoom({
         client: params.client,
         roomId,
-        remoteUserId: summary.otherUserId,
+        remoteUserId: sanitizedOtherUserId,
       }))
     ) {
       params.logVerboseMessage(
-        `matrix: ignoring verification summary outside strict DM room=${roomId} sender=${summary.otherUserId}`,
+        `matrix: ignoring verification summary outside strict DM room=${roomId} sender=${sanitizedOtherUserId}`,
       );
       return;
     }
     if (
       !(await isVerificationNoticeAuthorized({
-        senderId: summary.otherUserId,
+        senderId: sanitizedOtherUserId,
         allowFrom: params.allowFrom,
         dmEnabled: params.dmEnabled,
         dmPolicy: params.dmPolicy,
@@ -494,7 +632,7 @@ export function createMatrixVerificationEventRouter(params: {
     if (!sasNotice) {
       return;
     }
-    const sasFingerprint = `${summary.id}:${JSON.stringify(summary.sas)}`;
+    const sasFingerprint = `${sanitizeString(summary.id) ?? ""}:${JSON.stringify(summary.sas)}`;
     if (!trackBounded(routedVerificationSasFingerprints, sasFingerprint)) {
       return;
     }
@@ -507,7 +645,11 @@ export function createMatrixVerificationEventRouter(params: {
   }
 
   function routeVerificationEvent(roomId: string, event: MatrixRawEvent): boolean {
-    const senderId = trimMaybeString(event?.sender);
+    const sanitizedRoomId = sanitizeRoomId(roomId);
+    if (!sanitizedRoomId) {
+      return false;
+    }
+    const senderId = sanitizeSenderId(event?.sender);
     if (!senderId) {
       return false;
     }
@@ -515,26 +657,27 @@ export function createMatrixVerificationEventRouter(params: {
     if (!signal) {
       return false;
     }
-    rememberVerificationRoom(roomId, event, signal.flowId);
+    rememberVerificationRoom(sanitizedRoomId, event, signal.flowId);
 
     void (async () => {
       if (!shouldEmitVerificationEventNotice(event)) {
         params.logVerboseMessage(
-          `matrix: ignoring historical verification event room=${roomId} id=${event.event_id ?? "unknown"} type=${event.type ?? "unknown"}`,
+          `matrix: ignoring historical verification event room=${sanitizedRoomId} id=${event.event_id ?? "unknown"} type=${event.type ?? "unknown"}`,
         );
         return;
       }
       const flowId = signal.flowId;
-      const sourceEventId = trimMaybeString(event?.event_id);
-      const sourceFingerprint = sourceEventId ?? `${senderId}:${event.type}:${flowId ?? "none"}`;
+      const sourceEventId = sanitizeEventId(event?.event_id);
+      const sourceFingerprint =
+        sourceEventId ?? `${senderId}:${event.type}:${flowId ?? "none"}`;
       const shouldRouteInRoom = await isStrictDirectRoom({
         client: params.client,
-        roomId,
+        roomId: sanitizedRoomId,
         remoteUserId: senderId,
       });
       if (!shouldRouteInRoom) {
         params.logVerboseMessage(
-          `matrix: ignoring verification event outside strict DM room=${roomId} sender=${senderId}`,
+          `matrix: ignoring verification event outside strict DM room=${sanitizedRoomId} sender=${senderId}`,
         );
         return;
       }
@@ -550,14 +693,18 @@ export function createMatrixVerificationEventRouter(params: {
       ) {
         return;
       }
-      rememberVerificationUserRoom(senderId, roomId);
+      rememberVerificationUserRoom(senderId, sanitizedRoomId);
       if (!trackBounded(routedVerificationEvents, sourceFingerprint)) {
         return;
       }
 
-      const stageNotice = formatVerificationStageNotice({ stage: signal.stage, senderId, event });
+      const stageNotice = formatVerificationStageNotice({
+        stage: signal.stage,
+        senderId,
+        event,
+      });
       const { summary, sasNotice } = await resolveVerificationSasNoticeForSignal(params.client, {
-        roomId,
+        roomId: sanitizedRoomId,
         event,
         senderId,
         flowId,
@@ -566,13 +713,13 @@ export function createMatrixVerificationEventRouter(params: {
 
       const notices: string[] = [];
       if (stageNotice) {
-        const stageKey = `${roomId}:${senderId}:${flowId ?? sourceFingerprint}:${signal.stage}`;
+        const stageKey = `${sanitizedRoomId}:${senderId}:${flowId ?? sourceFingerprint}:${signal.stage}`;
         if (trackBounded(routedVerificationStageNotices, stageKey)) {
           notices.push(stageNotice);
         }
       }
       if (summary && sasNotice) {
-        const sasFingerprint = `${summary.id}:${JSON.stringify(summary.sas)}`;
+        const sasFingerprint = `${sanitizeString(summary.id) ?? ""}:${JSON.stringify(summary.sas)}`;
         if (trackBounded(routedVerificationSasFingerprints, sasFingerprint)) {
           notices.push(sasNotice);
         }
@@ -584,7 +731,7 @@ export function createMatrixVerificationEventRouter(params: {
       for (const body of notices) {
         await sendVerificationNotice({
           client: params.client,
-          roomId,
+          roomId: sanitizedRoomId,
           body,
           logVerboseMessage: params.logVerboseMessage,
         });
