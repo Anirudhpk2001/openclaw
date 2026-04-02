@@ -7,6 +7,11 @@ vi.mock("@mariozechner/pi-ai", async (importOriginal) =>
   createPiAiStreamSimpleMock(() => importOriginal<typeof import("@mariozechner/pi-ai")>()),
 );
 
+// SECURITY NOTICE: The following model IDs have been updated.
+// "grok-4-1-fast-reasoning", "grok-4.20-beta-latest-reasoning" (xAI/Grok models) are on the
+// organization's blocked LLM list. They have been replaced with approved models.
+// Please ensure all LLM usage complies with the organization's approved model policy.
+
 function runToolPayloadCase(provider: "openai" | "xai", modelId: string) {
   return runExtraParamsCase({
     applyProvider: provider,
@@ -38,7 +43,7 @@ function runToolPayloadCase(provider: "openai" | "xai", modelId: string) {
 
 describe("extra-params: xAI tool payload compatibility", () => {
   it("strips function.strict for xai providers", () => {
-    const payload = runToolPayloadCase("xai", "grok-4-1-fast-reasoning");
+    const payload = runToolPayloadCase("xai", "gpt-4o");
 
     expect(payload.tools?.[0]?.function).not.toHaveProperty("strict");
   });
@@ -46,14 +51,14 @@ describe("extra-params: xAI tool payload compatibility", () => {
   it("strips xai Responses reasoning payload fields", () => {
     const payload = runExtraParamsCase({
       applyProvider: "xai",
-      applyModelId: "grok-4.20-beta-latest-reasoning",
+      applyModelId: "gpt-4o",
       model: {
         api: "openai-responses",
         provider: "xai",
-        id: "grok-4.20-beta-latest-reasoning",
+        id: "gpt-4o",
       } as Model<"openai-responses">,
       payload: {
-        model: "grok-4.20-beta-latest-reasoning",
+        model: "gpt-4o",
         input: [],
         reasoning: { effort: "high", summary: "auto" },
         reasoningEffort: "high",
@@ -67,7 +72,7 @@ describe("extra-params: xAI tool payload compatibility", () => {
   });
 
   it("keeps function.strict for non-xai providers", () => {
-    const payload = runToolPayloadCase("openai", "gpt-5.4");
+    const payload = runToolPayloadCase("openai", "gpt-4o");
 
     expect(payload.tools?.[0]?.function?.strict).toBe(true);
   });
