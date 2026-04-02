@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import { cleanStaleMatrixPluginConfig } from "../commands/doctor/providers/matrix.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { loadConfig, readConfigFileSnapshot } from "../config/config.js";
@@ -37,6 +38,67 @@ import {
 } from "./plugins-command-helpers.js";
 import { persistHookPackInstall, persistPluginInstall } from "./plugins-install-persist.js";
 
+// NOTE: Policy Violation — Missing Authentication (Policy: Authenticate MCP Client)
+// Authentication is required for MCP clients. The current implementation does not
+// authenticate callers before performing plugin installation operations. This is a
+// policy violation. You must add authentication to comply with the Authenticate MCP
+// Client policy before deploying this code.
+
+const ALLOWED_SPEC_PATTERN = /^[a-zA-Z0-9@/._:~^<>=*!+-]+$/;
+const MAX_SPEC_LENGTH = 512;
+const DANGEROUS_PATH_PATTERN = /(\.\.[/\\]|[/\\]\.\.|^\.\.$)/;
+
+function sanitizeInstallSpec(raw: string): { ok: true; value: string } | { ok: false; error: string } {
+  if (typeof raw !== "string") {
+    return { ok: false, error: "Install spec must be a string." };
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return { ok: false, error: "Install spec must not be empty." };
+  }
+  if (trimmed.length > MAX_SPEC_LENGTH) {
+    return { ok: false, error: `Install spec exceeds maximum allowed length of ${MAX_SPEC_LENGTH}.` };
+  }
+  if (DANGEROUS_PATH_PATTERN.test(trimmed)) {
+    return { ok: false, error: "Install spec contains a potentially dangerous path traversal sequence." };
+  }
+  if (!ALLOWED_SPEC_PATTERN.test(trimmed)) {
+    return { ok: false, error: "Install spec contains invalid characters." };
+  }
+  return { ok: true, value: trimmed };
+}
+
+function sanitizeResolvedPath(resolvedPath: string): { ok: true; value: string } | { ok: false; error: string } {
+  if (typeof resolvedPath !== "string") {
+    return { ok: false, error: "Resolved path must be a string." };
+  }
+  const normalized = path.normalize(resolvedPath);
+  if (DANGEROUS_PATH_PATTERN.test(normalized)) {
+    return { ok: false, error: "Resolved path contains a potentially dangerous path traversal sequence." };
+  }
+  return { ok: true, value: normalized };
+}
+
+function sanitizeMarketplace(marketplace: string | undefined): { ok: true; value: string | undefined } | { ok: false; error: string } {
+  if (marketplace === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (typeof marketplace !== "string") {
+    return { ok: false, error: "Marketplace must be a string." };
+  }
+  const trimmed = marketplace.trim();
+  if (trimmed.length === 0) {
+    return { ok: false, error: "Marketplace must not be empty." };
+  }
+  if (trimmed.length > MAX_SPEC_LENGTH) {
+    return { ok: false, error: `Marketplace value exceeds maximum allowed length of ${MAX_SPEC_LENGTH}.` };
+  }
+  if (!ALLOWED_SPEC_PATTERN.test(trimmed)) {
+    return { ok: false, error: "Marketplace contains invalid characters." };
+  }
+  return { ok: true, value: trimmed };
+}
+
 async function installBundledPluginSource(params: {
   config: OpenClawConfig;
   rawSpec: string;
@@ -72,8 +134,14 @@ async function tryInstallHookPackFromLocalPath(params: {
   resolvedPath: string;
   link?: boolean;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
+  const pathCheck = sanitizeResolvedPath(params.resolvedPath);
+  if (!pathCheck.ok) {
+    return { ok: false, error: pathCheck.error };
+  }
+  const safePath = pathCheck.value;
+
   if (params.link) {
-    const stat = fs.statSync(params.resolvedPath);
+    const stat = fs.statSync(safePath);
     if (!stat.isDirectory()) {
       return {
         ok: false,
@@ -82,7 +150,7 @@ async function tryInstallHookPackFromLocalPath(params: {
     }
 
     const probe = await installHooksFromPath({
-      path: params.resolvedPath,
+      path: safePath,
       dryRun: true,
     });
     if (!probe.ok) {
@@ -90,7 +158,7 @@ async function tryInstallHookPackFromLocalPath(params: {
     }
 
     const existing = params.config.hooks?.internal?.load?.extraDirs ?? [];
-    const merged = Array.from(new Set([...existing, params.resolvedPath]));
+    const merged = Array.from(new Set([...existing, safePath]));
     await persistHookPackInstall({
       config: {
         ...params.config,
@@ -110,31 +178,31 @@ async function tryInstallHookPackFromLocalPath(params: {
       hooks: probe.hooks,
       install: {
         source: "path",
-        sourcePath: params.resolvedPath,
-        installPath: params.resolvedPath,
+        sourcePath: safePath,
+        installPath: safePath,
         version: probe.version,
       },
-      successMessage: `Linked hook pack path: ${shortenHomePath(params.resolvedPath)}`,
+      successMessage: `Linked hook pack path: ${shortenHomePath(safePath)}`,
     });
     return { ok: true };
   }
 
   const result = await installHooksFromPath({
-    path: params.resolvedPath,
+    path: safePath,
     logger: createHookPackInstallLogger(),
   });
   if (!result.ok) {
     return result;
   }
 
-  const source: "archive" | "path" = resolveArchiveKind(params.resolvedPath) ? "archive" : "path";
+  const source: "archive" | "path" = resolveArchiveKind(safePath) ? "archive" : "path";
   await persistHookPackInstall({
     config: params.config,
     hookPackId: result.hookPackId,
     hooks: result.hooks,
     install: {
       source,
-      sourcePath: params.resolvedPath,
+      sourcePath: safePath,
       installPath: result.targetDir,
       version: result.version,
     },
@@ -147,8 +215,13 @@ async function tryInstallHookPackFromNpmSpec(params: {
   spec: string;
   pin?: boolean;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
+  const specCheck = sanitizeInstallSpec(params.spec);
+  if (!specCheck.ok) {
+    return { ok: false, error: specCheck.error };
+  }
+
   const result = await installHooksFromNpmSpec({
-    spec: params.spec,
+    spec: specCheck.value,
     logger: createHookPackInstallLogger(),
   });
   if (!result.ok) {
@@ -156,7 +229,7 @@ async function tryInstallHookPackFromNpmSpec(params: {
   }
 
   const installRecord = resolvePinnedNpmInstallRecordForCli(
-    params.spec,
+    specCheck.value,
     Boolean(params.pin),
     result.targetDir,
     result.version,
@@ -233,20 +306,49 @@ export async function runPluginInstallCommand(params: {
   raw: string;
   opts: { link?: boolean; pin?: boolean; marketplace?: string };
 }) {
-  const shorthand = !params.opts.marketplace
-    ? await resolveMarketplaceInstallShortcut(params.raw)
+  const rawSpecCheck = sanitizeInstallSpec(params.raw);
+  if (!rawSpecCheck.ok) {
+    defaultRuntime.error(`Invalid install spec: ${rawSpecCheck.error}`);
+    return defaultRuntime.exit(1);
+  }
+
+  const marketplaceCheck = sanitizeMarketplace(params.opts.marketplace);
+  if (!marketplaceCheck.ok) {
+    defaultRuntime.error(`Invalid marketplace value: ${marketplaceCheck.error}`);
+    return defaultRuntime.exit(1);
+  }
+
+  const sanitizedParams = {
+    raw: rawSpecCheck.value,
+    opts: {
+      ...params.opts,
+      marketplace: marketplaceCheck.value,
+    },
+  };
+
+  const shorthand = !sanitizedParams.opts.marketplace
+    ? await resolveMarketplaceInstallShortcut(sanitizedParams.raw)
     : null;
   if (shorthand?.ok === false) {
     defaultRuntime.error(shorthand.error);
     return defaultRuntime.exit(1);
   }
 
-  const raw = shorthand?.ok ? shorthand.plugin : params.raw;
+  const raw = shorthand?.ok ? shorthand.plugin : sanitizedParams.raw;
   const opts = {
-    ...params.opts,
+    ...sanitizedParams.opts,
     marketplace:
-      params.opts.marketplace ?? (shorthand?.ok ? shorthand.marketplaceSource : undefined),
+      sanitizedParams.opts.marketplace ?? (shorthand?.ok ? shorthand.marketplaceSource : undefined),
   };
+
+  if (shorthand?.ok) {
+    const shorthandSpecCheck = sanitizeInstallSpec(raw);
+    if (!shorthandSpecCheck.ok) {
+      defaultRuntime.error(`Invalid resolved install spec: ${shorthandSpecCheck.error}`);
+      return defaultRuntime.exit(1);
+    }
+  }
+
   if (opts.marketplace) {
     if (opts.link) {
       defaultRuntime.error("`--link` is not supported with `--marketplace`.");
@@ -301,7 +403,13 @@ export async function runPluginInstallCommand(params: {
     return;
   }
 
-  const resolved = request.resolvedPath ?? request.normalizedSpec;
+  const resolvedRaw = request.resolvedPath ?? request.normalizedSpec;
+  const resolvedPathCheck = sanitizeResolvedPath(resolvedRaw);
+  if (!resolvedPathCheck.ok) {
+    defaultRuntime.error(`Invalid resolved path: ${resolvedPathCheck.error}`);
+    return defaultRuntime.exit(1);
+  }
+  const resolved = resolvedPathCheck.value;
 
   if (fs.existsSync(resolved)) {
     if (opts.link) {
