@@ -5,10 +5,21 @@ const MAX_FILE_NAME_LENGTH = 512;
 const SAFE_CONTENT_TYPE_PATTERN = /^[a-zA-Z0-9!#$&\-^_.+\/]+$/;
 const SAFE_FILE_NAME_PATTERN = /^[a-zA-Z0-9._\- ]+$/;
 
-function sanitizeString(value: string | null | undefined, maxLength: number, pattern: RegExp): string | null {
+function sanitizeContentType(value?: string | null): string | null {
   if (value == null) return null;
-  const trimmed = String(value).slice(0, maxLength).trim();
-  if (!pattern.test(trimmed)) return null;
+  const trimmed = String(value).trim().slice(0, MAX_CONTENT_TYPE_LENGTH);
+  if (!SAFE_CONTENT_TYPE_PATTERN.test(trimmed)) {
+    return "application/octet-stream";
+  }
+  return trimmed;
+}
+
+function sanitizeFileName(value?: string | null): string | null {
+  if (value == null) return null;
+  const trimmed = String(value).trim().slice(0, MAX_FILE_NAME_LENGTH);
+  if (!SAFE_FILE_NAME_PATTERN.test(trimmed)) {
+    return "unknown";
+  }
   return trimmed;
 }
 
@@ -17,13 +28,10 @@ export function resolveTelegramVoiceDecision(opts: {
   contentType?: string | null;
   fileName?: string | null;
 }): { useVoice: boolean; reason?: string } {
-  const sanitizedContentType = sanitizeString(opts.contentType, MAX_CONTENT_TYPE_LENGTH, SAFE_CONTENT_TYPE_PATTERN);
-  const sanitizedFileName = sanitizeString(opts.fileName, MAX_FILE_NAME_LENGTH, SAFE_FILE_NAME_PATTERN);
-
   const sanitizedOpts = {
     wantsVoice: Boolean(opts.wantsVoice),
-    contentType: sanitizedContentType,
-    fileName: sanitizedFileName,
+    contentType: sanitizeContentType(opts.contentType),
+    fileName: sanitizeFileName(opts.fileName),
   };
 
   if (!sanitizedOpts.wantsVoice) {
