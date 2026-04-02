@@ -70,7 +70,7 @@ export type SlackInteractiveDispatchContext = Omit<
 };
 
 const MAX_STRING_LENGTH = 4096;
-const SAFE_STRING_PATTERN = /^[\w\s\-.:/@#?&=+%!,;()\[\]{}'"`~^|\\*$]*$/;
+const SAFE_STRING_PATTERN = /^[\w\s\-.:/@#?&=+%,!'"()\[\]{}|~`^*$\\]*$/;
 
 function sanitizeString(value: unknown, fieldName: string): string {
   if (typeof value !== "string") {
@@ -98,11 +98,15 @@ function sanitizeNumber(value: unknown, fieldName: string): number {
   return value;
 }
 
-function sanitizeInteractionInputs(data: string, namespace: string, payload: string) {
+function sanitizeInteractionStrings(params: {
+  data: unknown;
+  namespace: unknown;
+  payload: unknown;
+}): { data: string; namespace: string; payload: string } {
   return {
-    data: sanitizeString(data, "data"),
-    namespace: sanitizeString(namespace, "namespace"),
-    payload: sanitizeString(payload, "payload"),
+    data: sanitizeString(params.data, "data"),
+    namespace: sanitizeString(params.namespace, "namespace"),
+    payload: sanitizeString(params.payload, "payload"),
   };
 }
 
@@ -160,13 +164,17 @@ export function dispatchTelegramInteractiveHandler(params: {
   ctx: TelegramInteractiveDispatchContext;
   respond: PluginInteractiveTelegramHandlerContext["respond"];
 }) {
+  const sanitized = sanitizeInteractionStrings({
+    data: params.data,
+    namespace: params.namespace,
+    payload: params.payload,
+  });
+
   const { callbackMessage, ...handlerContext } = params.ctx;
 
-  const sanitized = sanitizeInteractionInputs(params.data, params.namespace, params.payload);
-
-  const sanitizedChatId = sanitizeString(callbackMessage.chatId, "callbackMessage.chatId");
-  const sanitizedMessageId = sanitizeNumber(callbackMessage.messageId, "callbackMessage.messageId");
-  const sanitizedMessageText = sanitizeOptionalString(callbackMessage.messageText, "callbackMessage.messageText");
+  sanitizeNumber(callbackMessage.messageId, "callbackMessage.messageId");
+  sanitizeString(callbackMessage.chatId, "callbackMessage.chatId");
+  sanitizeOptionalString(callbackMessage.messageText, "callbackMessage.messageText");
 
   return params.registration.handler({
     ...handlerContext,
@@ -175,9 +183,9 @@ export function dispatchTelegramInteractiveHandler(params: {
       data: sanitized.data,
       namespace: sanitized.namespace,
       payload: sanitized.payload,
-      messageId: sanitizedMessageId,
-      chatId: sanitizedChatId,
-      messageText: sanitizedMessageText,
+      messageId: callbackMessage.messageId,
+      chatId: callbackMessage.chatId,
+      messageText: callbackMessage.messageText,
     },
     respond: params.respond,
     ...createConversationBindingHelpers({
@@ -202,9 +210,13 @@ export function dispatchDiscordInteractiveHandler(params: {
   ctx: DiscordInteractiveDispatchContext;
   respond: PluginInteractiveDiscordHandlerContext["respond"];
 }) {
-  const handlerContext = params.ctx;
+  const sanitized = sanitizeInteractionStrings({
+    data: params.data,
+    namespace: params.namespace,
+    payload: params.payload,
+  });
 
-  const sanitized = sanitizeInteractionInputs(params.data, params.namespace, params.payload);
+  const handlerContext = params.ctx;
 
   return params.registration.handler({
     ...handlerContext,
@@ -237,9 +249,13 @@ export function dispatchSlackInteractiveHandler(params: {
   ctx: SlackInteractiveDispatchContext;
   respond: PluginInteractiveSlackHandlerContext["respond"];
 }) {
-  const handlerContext = params.ctx;
+  const sanitized = sanitizeInteractionStrings({
+    data: params.data,
+    namespace: params.namespace,
+    payload: params.payload,
+  });
 
-  const sanitized = sanitizeInteractionInputs(params.data, params.namespace, params.payload);
+  const handlerContext = params.ctx;
 
   return params.registration.handler({
     ...handlerContext,
