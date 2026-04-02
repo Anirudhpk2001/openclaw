@@ -10,19 +10,34 @@ import { resolveProfileOverride } from "./directive-handling.auth-profile.js";
 import type { InlineDirectives } from "./directive-handling.parse.js";
 import { type ModelDirectiveSelection, resolveModelDirectiveSelection } from "./model-selection.js";
 
-const MAX_RAW_LENGTH = 512;
-const VALID_MODEL_PATTERN = /^[a-zA-Z0-9_\-./: @]+$/;
-const VALID_PROFILE_ID_PATTERN = /^\d{8}$/;
+const MAX_INPUT_LENGTH = 1024;
+const SAFE_MODEL_DIRECTIVE_PATTERN = /^[a-zA-Z0-9_\-./: @]+$/;
+const SAFE_PROFILE_PATTERN = /^[a-zA-Z0-9_\-]+$/;
 
-function sanitizeRawInput(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (!trimmed || trimmed.length > MAX_RAW_LENGTH) {
-    return null;
+function sanitizeString(value: string): string {
+  return value.replace(/[\x00-\x1F\x7F]/g, "").trim();
+}
+
+function validateAndSanitizeModelDirective(raw: string): { sanitized: string; error?: string } {
+  if (raw.length > MAX_INPUT_LENGTH) {
+    return { sanitized: "", error: "Model directive input exceeds maximum allowed length." };
   }
-  if (!VALID_MODEL_PATTERN.test(trimmed)) {
-    return null;
+  const sanitized = sanitizeString(raw);
+  if (!SAFE_MODEL_DIRECTIVE_PATTERN.test(sanitized)) {
+    return { sanitized: "", error: "Model directive contains invalid characters." };
   }
-  return trimmed;
+  return { sanitized };
+}
+
+function validateAndSanitizeProfile(raw: string): { sanitized: string; error?: string } {
+  if (raw.length > MAX_INPUT_LENGTH) {
+    return { sanitized: "", error: "Profile input exceeds maximum allowed length." };
+  }
+  const sanitized = sanitizeString(raw);
+  if (!SAFE_PROFILE_PATTERN.test(sanitized)) {
+    return { sanitized: "", error: "Profile contains invalid characters." };
+  }
+  return { sanitized };
 }
 
 function resolveStoredNumericProfileModelDirective(params: { raw: string; agentDir: string }): {
@@ -30,11 +45,7 @@ function resolveStoredNumericProfileModelDirective(params: { raw: string; agentD
   profileId: string;
   profileProvider: string;
 } | null {
-  const sanitized = sanitizeRawInput(params.raw);
-  if (!sanitized) {
-    return null;
-  }
-  const trimmed = sanitized;
+  const trimmed = params.raw.trim();
   const lastSlash = trimmed.lastIndexOf("/");
   const profileDelimiter = trimmed.indexOf("@", lastSlash + 1);
   if (profileDelimiter <= 0) {
@@ -42,16 +53,12 @@ function resolveStoredNumericProfileModelDirective(params: { raw: string; agentD
   }
 
   const profileId = trimmed.slice(profileDelimiter + 1).trim();
-  if (!VALID_PROFILE_ID_PATTERN.test(profileId)) {
+  if (!/^\d{8}$/.test(profileId)) {
     return null;
   }
 
   const modelRaw = trimmed.slice(0, profileDelimiter).trim();
   if (!modelRaw) {
-    return null;
-  }
-
-  if (!VALID_MODEL_PATTERN.test(modelRaw)) {
     return null;
   }
 
@@ -89,23 +96,23 @@ export function resolveModelSelectionFromDirective(params: {
   }
 
   const rawDirective = params.directives.rawModelDirective.trim();
-  if (!rawDirective || rawDirective.length > MAX_RAW_LENGTH) {
-    return { errorText: "Invalid model directive: input is empty or too long." };
+  const directiveValidation = validateAndSanitizeModelDirective(rawDirective);
+  if (directiveValidation.error) {
+    return { errorText: directiveValidation.error };
   }
-  if (!VALID_MODEL_PATTERN.test(rawDirective)) {
-    return { errorText: "Invalid model directive: contains disallowed characters." };
-  }
-  const raw = rawDirective;
+  const raw = directiveValidation.sanitized;
 
+  let sanitizedRawProfile: string | undefined;
   if (params.directives.rawModelProfile !== undefined) {
-    const rawProfile = params.directives.rawModelProfile.trim();
-    if (rawProfile.length > MAX_RAW_LENGTH || !VALID_MODEL_PATTERN.test(rawProfile)) {
-      return { errorText: "Invalid auth profile: contains disallowed characters." };
+    const profileValidation = validateAndSanitizeProfile(params.directives.rawModelProfile);
+    if (profileValidation.error) {
+      return { errorText: profileValidation.error };
     }
+    sanitizedRawProfile = profileValidation.sanitized;
   }
 
   const storedNumericProfile =
-    params.directives.rawModelProfile === undefined
+    sanitizedRawProfile === undefined
       ? resolveStoredNumericProfileModelDirective({
           raw,
           agentDir: params.agentDir,
@@ -178,15 +185,11 @@ export function resolveModelSelectionFromDirective(params: {
 
   let profileOverride: string | undefined;
   const rawProfile =
-    params.directives.rawModelProfile ??
+    sanitizedRawProfile ??
     (useStoredNumericProfile ? storedNumericProfile?.profileId : undefined);
   if (modelSelection && rawProfile) {
-    const sanitizedRawProfile = rawProfile.trim();
-    if (!sanitizedRawProfile || sanitizedRawProfile.length > MAX_RAW_LENGTH || !VALID_MODEL_PATTERN.test(sanitizedRawProfile)) {
-      return { errorText: "Invalid auth profile identifier." };
-    }
     const profileResolved = resolveProfileOverride({
-      rawProfile: sanitizedRawProfile,
+      rawProfile,
       provider: modelSelection.provider,
       cfg: params.cfg,
       agentDir: params.agentDir,
