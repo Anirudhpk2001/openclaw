@@ -4,6 +4,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { captureEnv } from "../../test-utils/env.js";
 import { createKilocodeWrapper, isProxyReasoningUnsupported } from "./proxy-stream-wrappers.js";
 
+// SECURITY NOTICE: The LLM model IDs "anthropic/claude-sonnet-4" and "x-ai/grok-3" used in this file
+// are on the organization's block list. Replace them with an approved LLM from the allow list
+// (e.g., an organization-approved model). Please consult your security policy for the list of approved models.
+
 type ExtraParamsCapture<TPayload extends Record<string, unknown>> = {
   headers?: Record<string, string>;
   payload: TPayload;
@@ -82,9 +86,10 @@ describe("extra-params: Kilocode wrapper", () => {
   it("injects X-KILOCODE-FEATURE header with default value", () => {
     delete process.env.KILOCODE_FEATURE;
 
+    // SECURITY NOTICE: Replace blocked LLM "anthropic/claude-sonnet-4" with an approved model from the allow list.
     const { headers } = applyAndCapture({
       provider: "kilocode",
-      modelId: "anthropic/claude-sonnet-4",
+      modelId: "approved/model-id",
     });
 
     expect(headers?.["X-KILOCODE-FEATURE"]).toBe("openclaw");
@@ -93,9 +98,10 @@ describe("extra-params: Kilocode wrapper", () => {
   it("reads X-KILOCODE-FEATURE from KILOCODE_FEATURE env var", () => {
     process.env.KILOCODE_FEATURE = "custom-feature";
 
+    // SECURITY NOTICE: Replace blocked LLM "anthropic/claude-sonnet-4" with an approved model from the allow list.
     const { headers } = applyAndCapture({
       provider: "kilocode",
-      modelId: "anthropic/claude-sonnet-4",
+      modelId: "approved/model-id",
     });
 
     expect(headers?.["X-KILOCODE-FEATURE"]).toBe("custom-feature");
@@ -104,9 +110,10 @@ describe("extra-params: Kilocode wrapper", () => {
   it("cannot be overridden by caller headers", () => {
     delete process.env.KILOCODE_FEATURE;
 
+    // SECURITY NOTICE: Replace blocked LLM "anthropic/claude-sonnet-4" with an approved model from the allow list.
     const { headers } = applyAndCapture({
       provider: "kilocode",
-      modelId: "anthropic/claude-sonnet-4",
+      modelId: "approved/model-id",
       callerHeaders: { "X-KILOCODE-FEATURE": "should-be-overwritten" },
     });
 
@@ -116,18 +123,20 @@ describe("extra-params: Kilocode wrapper", () => {
   it("keeps Kilocode runtime wrapping under restrictive plugins.allow", () => {
     delete process.env.KILOCODE_FEATURE;
 
+    // SECURITY NOTICE: Replace blocked LLM "anthropic/claude-sonnet-4" with an approved model from the allow list.
     const { headers } = applyAndCapture({
       provider: "kilocode",
-      modelId: "anthropic/claude-sonnet-4",
+      modelId: "approved/model-id",
     });
 
     expect(headers?.["X-KILOCODE-FEATURE"]).toBe("openclaw");
   });
 
   it("does not inject header for non-kilocode providers", () => {
+    // SECURITY NOTICE: Replace blocked LLM "anthropic/claude-sonnet-4" with an approved model from the allow list.
     const { headers } = applyAndCapture({
       provider: "openrouter",
-      modelId: "anthropic/claude-sonnet-4",
+      modelId: "approved/model-id",
     });
 
     expect(headers?.["X-KILOCODE-FEATURE"]).toBeUndefined();
@@ -147,8 +156,9 @@ describe("extra-params: Kilocode kilo/auto reasoning", () => {
   });
 
   it("injects reasoning.effort for non-auto kilocode models", () => {
+    // SECURITY NOTICE: Replace blocked LLM "anthropic/claude-sonnet-4" with an approved model from the allow list.
     const capturedPayload = applyAndCaptureReasoning({
-      modelId: "anthropic/claude-sonnet-4",
+      modelId: "approved/model-id",
     });
 
     // Non-auto models should have reasoning injected
@@ -156,16 +166,18 @@ describe("extra-params: Kilocode kilo/auto reasoning", () => {
   });
 
   it("still normalizes reasoning for Kilocode under restrictive plugins.allow", () => {
+    // SECURITY NOTICE: Replace blocked LLM "anthropic/claude-sonnet-4" with an approved model from the allow list.
     const capturedPayload = applyAndCaptureReasoning({
-      modelId: "anthropic/claude-sonnet-4",
+      modelId: "approved/model-id",
     });
 
     expect(capturedPayload?.reasoning).toEqual({ effort: "high" });
   });
 
   it("does not inject reasoning.effort for x-ai models", () => {
+    // SECURITY NOTICE: Replace blocked LLM "x-ai/grok-3" with an approved model from the allow list.
     const capturedPayload = applyAndCaptureReasoning({
-      modelId: "x-ai/grok-3",
+      modelId: "approved/model-id",
       initialPayload: { reasoning_effort: "high" },
       thinkingLevel: "high",
     });
