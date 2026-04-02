@@ -15,8 +15,8 @@ type ChannelSmokeCase = {
 
 const signalSender: SignalSender = {
   kind: "phone",
-  raw: "+15550001111",
-  e164: "+15550001111",
+  raw: "[REDACTED]",
+  e164: "[REDACTED]",
 };
 
 const channelSmokeCases: ChannelSmokeCase[] = [
