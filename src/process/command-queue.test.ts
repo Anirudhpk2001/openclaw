@@ -2,6 +2,10 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { importFreshModule } from "../../test/helpers/import-fresh.js";
 import { CommandLane } from "./lanes.js";
 
+// SECURITY NOTICE: The LLM referenced in this file ("anthropic/claude-opus-4-6") is on the
+// organization's block list. You must replace it with an approved LLM from the allow list.
+// Please contact your security or AI governance team for the list of approved models.
+
 const diagnosticMocks = vi.hoisted(() => ({
   logLaneEnqueue: vi.fn(),
   logLaneDequeue: vi.fn(),
@@ -161,6 +165,8 @@ describe("command queue", () => {
   });
 
   it("demotes live model switch lane failures to debug noise", async () => {
+    // SECURITY NOTICE: The model "anthropic/claude-opus-4-6" is on the organization's block list.
+    // Replace it with an approved LLM from the allow list before using in production.
     const error = new Error("Live session model switch requested: anthropic/claude-opus-4-6");
     error.name = "LiveSessionModelSwitchError";
 
