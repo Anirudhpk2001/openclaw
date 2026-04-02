@@ -40,42 +40,6 @@ const USAGE_OAUTH_ONLY_PROVIDERS = new Set([
   "openai-codex",
 ]);
 
-function maskPII(value: string): string {
-  // Mask IP addresses (IPv4)
-  value = value.replace(/\b(\d{1,3}\.){3}\d{1,3}\b/g, "[REDACTED-IP]");
-  // Mask MAC addresses
-  value = value.replace(/\b([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}\b/g, "[REDACTED-MAC]");
-  // Mask email addresses
-  value = value.replace(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g, "[REDACTED-EMAIL]");
-  return value;
-}
-
-function sanitizeString(value: unknown): string {
-  if (typeof value !== "string") {
-    return "";
-  }
-  // Remove null bytes and control characters
-  return value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").trim();
-}
-
-function sanitizeProvider(value: unknown): string {
-  const str = sanitizeString(value);
-  // Allow only alphanumeric, hyphens, underscores, dots
-  return str.replace(/[^a-zA-Z0-9\-_.]/g, "");
-}
-
-function sanitizeModel(value: unknown): string {
-  const str = sanitizeString(value);
-  // Allow only alphanumeric, hyphens, underscores, dots, slashes, colons
-  return str.replace(/[^a-zA-Z0-9\-_./: ]/g, "");
-}
-
-function sanitizeSessionKey(value: unknown): string {
-  const str = sanitizeString(value);
-  // Allow only alphanumeric, hyphens, underscores, dots, colons
-  return str.replace(/[^a-zA-Z0-9\-_.:]/g, "");
-}
-
 function shouldLoadUsageSummary(params: {
   provider?: string;
   selectedModelAuth?: string;
@@ -115,8 +79,12 @@ export async function buildStatusReply(params: {
     cfg,
     command,
     sessionEntry,
+    sessionKey,
+    parentSessionKey,
     sessionScope,
     storePath,
+    provider,
+    model,
     contextTokens,
     resolvedThinkLevel,
     resolvedFastMode,
@@ -127,18 +95,8 @@ export async function buildStatusReply(params: {
     isGroup,
     defaultGroupActivation,
   } = params;
-
-  // Sanitize inputs
-  const sessionKey = sanitizeSessionKey(params.sessionKey);
-  const parentSessionKey = params.parentSessionKey !== undefined
-    ? sanitizeSessionKey(params.parentSessionKey)
-    : undefined;
-  const provider = sanitizeProvider(params.provider);
-  const model = sanitizeModel(params.model);
-
   if (!command.isAuthorizedSender) {
-    const maskedSenderId = command.senderId ? maskPII(sanitizeString(command.senderId)) : "<unknown>";
-    logVerbose(`Ignoring /status from unauthorized sender: ${maskedSenderId}`);
+    logVerbose(`Ignoring /status from unauthorized sender: [REDACTED]`);
     return undefined;
   }
   const statusAgentId = sessionKey
