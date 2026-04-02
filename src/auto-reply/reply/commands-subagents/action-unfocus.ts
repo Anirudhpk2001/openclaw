@@ -15,22 +15,53 @@ import {
   stopWithText,
 } from "./shared.js";
 
+// Policy Notice: Missing authentication is a policy violation. You must add authentication
+// to comply with the Authenticate MCP Client policy before using this handler in production.
+
+function sanitizeString(value: unknown): string {
+  if (typeof value !== "string") return "";
+  // Remove null bytes and control characters, trim whitespace
+  return value.replace(/[\x00-\x1F\x7F]/g, "").trim();
+}
+
+function isValidChannel(channel: unknown): channel is "discord" | "matrix" | "telegram" {
+  return channel === "discord" || channel === "matrix" || channel === "telegram";
+}
+
+function isValidConversationId(id: unknown): boolean {
+  if (typeof id !== "string") return false;
+  const sanitized = sanitizeString(id);
+  // Must be non-empty and contain only safe characters
+  return sanitized.length > 0 && /^[\w\-.:@#/]+$/.test(sanitized);
+}
+
+function isValidSenderId(id: unknown): boolean {
+  if (typeof id !== "string") return false;
+  const sanitized = sanitizeString(id);
+  return sanitized.length === 0 || /^[\w\-.:@#/]+$/.test(sanitized);
+}
+
 export async function handleSubagentsUnfocusAction(
   ctx: SubagentsCommandContext,
 ): Promise<CommandHandlerResult> {
   const { params } = ctx;
   const channel = resolveCommandSurfaceChannel(params);
-  if (channel !== "discord" && channel !== "matrix" && channel !== "telegram") {
+  if (!isValidChannel(channel)) {
     return stopWithText("⚠️ /unfocus is only available on Discord, Matrix, and Telegram.");
   }
 
   const accountId = resolveChannelAccountId(params);
+  const sanitizedAccountId = sanitizeString(accountId);
+  if (!sanitizedAccountId) {
+    return stopWithText("⚠️ Invalid account identifier.");
+  }
+
   const bindingService = getSessionBindingService();
 
   const conversationId = (() => {
     if (isDiscordSurface(params)) {
-      const threadId = params.ctx.MessageThreadId != null ? String(params.ctx.MessageThreadId) : "";
-      return threadId.trim() || undefined;
+      const threadId = params.ctx.MessageThreadId != null ? sanitizeString(String(params.ctx.MessageThreadId)) : "";
+      return threadId || undefined;
     }
     if (isTelegramSurface(params)) {
       return resolveTelegramConversationId(params);
@@ -49,6 +80,12 @@ export async function handleSubagentsUnfocusAction(
     }
     return undefined;
   })();
+
+  const sanitizedConversationId = conversationId ? sanitizeString(conversationId) : undefined;
+  if (sanitizedConversationId && !isValidConversationId(sanitizedConversationId)) {
+    return stopWithText("⚠️ Invalid conversation identifier.");
+  }
+
   const parentConversationId = (() => {
     if (!isMatrixSurface(params)) {
       return undefined;
@@ -65,7 +102,11 @@ export async function handleSubagentsUnfocusAction(
     });
   })();
 
-  if (!conversationId) {
+  const sanitizedParentConversationId = parentConversationId
+    ? sanitizeString(parentConversationId)
+    : undefined;
+
+  if (!sanitizedConversationId) {
     if (channel === "discord") {
       return stopWithText("⚠️ /unfocus must be run inside a Discord thread.");
     }
@@ -79,10 +120,10 @@ export async function handleSubagentsUnfocusAction(
 
   const binding = bindingService.resolveByConversation({
     channel,
-    accountId,
-    conversationId,
-    ...(parentConversationId && parentConversationId !== conversationId
-      ? { parentConversationId }
+    accountId: sanitizedAccountId,
+    conversationId: sanitizedConversationId,
+    ...(sanitizedParentConversationId && sanitizedParentConversationId !== sanitizedConversationId
+      ? { parentConversationId: sanitizedParentConversationId }
       : {}),
   });
   if (!binding) {
@@ -95,9 +136,14 @@ export async function handleSubagentsUnfocusAction(
     );
   }
 
-  const senderId = params.command.senderId?.trim() || "";
+  const rawSenderId = params.command.senderId?.trim() || "";
+  const senderId = sanitizeString(rawSenderId);
+  if (!isValidSenderId(senderId)) {
+    return stopWithText("⚠️ Invalid sender identifier.");
+  }
+
   const boundBy =
-    typeof binding.metadata?.boundBy === "string" ? binding.metadata.boundBy.trim() : "";
+    typeof binding.metadata?.boundBy === "string" ? sanitizeString(binding.metadata.boundBy) : "";
   if (boundBy && boundBy !== "system" && senderId && senderId !== boundBy) {
     return stopWithText(
       channel === "discord"
