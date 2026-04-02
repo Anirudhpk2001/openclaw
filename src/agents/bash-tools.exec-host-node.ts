@@ -31,6 +31,12 @@ import type { ExecToolDetails } from "./bash-tools.exec-types.js";
 import { callGatewayTool } from "./tools/gateway.js";
 import { listNodes, resolveNodeIdFromList } from "./tools/nodes-utils.js";
 
+// POLICY NOTICE: Missing authentication is a policy violation. You must add
+// authentication to MCP client connections to comply with the Authenticate MCP
+// Client policy. All callers of executeNodeHostCommand must supply verified
+// credentials and the gateway/node connections must be authenticated before
+// any tool invocation.
+
 export type ExecuteNodeHostCommandParams = {
   command: string;
   workdir: string;
@@ -55,19 +61,155 @@ export type ExecuteNodeHostCommandParams = {
   trustedSafeBinDirs?: ReadonlySet<string>;
 };
 
+/**
+ * Validates and sanitizes a string input to prevent injection attacks.
+ * Returns the sanitized string or throws if the input is invalid.
+ */
+function sanitizeStringInput(value: unknown, fieldName: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`Invalid input: ${fieldName} must be a string`);
+  }
+  // Reject null bytes
+  if (value.includes("\0")) {
+    throw new Error(`Invalid input: ${fieldName} contains null bytes`);
+  }
+  return value;
+}
+
+/**
+ * Validates and sanitizes an optional string input.
+ */
+function sanitizeOptionalStringInput(value: unknown, fieldName: string): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  return sanitizeStringInput(value, fieldName);
+}
+
+/**
+ * Validates and sanitizes an env record to prevent injection via env var names or values.
+ */
+function sanitizeEnvRecord(
+  env: Record<string, string>,
+  fieldName: string,
+): Record<string, string> {
+  if (typeof env !== "object" || env === null || Array.isArray(env)) {
+    throw new Error(`Invalid input: ${fieldName} must be a plain object`);
+  }
+  const sanitized: Record<string, string> = {};
+  for (const [key, val] of Object.entries(env)) {
+    if (typeof key !== "string" || key.includes("\0") || key.includes("=")) {
+      throw new Error(`Invalid input: ${fieldName} contains an invalid key`);
+    }
+    if (typeof val !== "string" || val.includes("\0")) {
+      throw new Error(`Invalid input: ${fieldName} contains an invalid value for key "${key}"`);
+    }
+    sanitized[key] = val;
+  }
+  return sanitized;
+}
+
+/**
+ * Validates and sanitizes all inputs in ExecuteNodeHostCommandParams.
+ */
+function sanitizeParams(params: ExecuteNodeHostCommandParams): ExecuteNodeHostCommandParams {
+  const command = sanitizeStringInput(params.command, "command");
+  const workdir = sanitizeStringInput(params.workdir, "workdir");
+  const env = sanitizeEnvRecord(params.env, "env");
+
+  const requestedEnv = params.requestedEnv
+    ? sanitizeEnvRecord(params.requestedEnv, "requestedEnv")
+    : undefined;
+
+  const requestedNode = sanitizeOptionalStringInput(params.requestedNode, "requestedNode");
+  const boundNode = sanitizeOptionalStringInput(params.boundNode, "boundNode");
+  const sessionKey = sanitizeOptionalStringInput(params.sessionKey, "sessionKey");
+  const turnSourceChannel = sanitizeOptionalStringInput(
+    params.turnSourceChannel,
+    "turnSourceChannel",
+  );
+  const turnSourceTo = sanitizeOptionalStringInput(params.turnSourceTo, "turnSourceTo");
+  const turnSourceAccountId = sanitizeOptionalStringInput(
+    params.turnSourceAccountId,
+    "turnSourceAccountId",
+  );
+  const agentId = sanitizeOptionalStringInput(params.agentId, "agentId");
+  const notifySessionKey = sanitizeOptionalStringInput(params.notifySessionKey, "notifySessionKey");
+
+  // Validate turnSourceThreadId
+  let turnSourceThreadId = params.turnSourceThreadId;
+  if (turnSourceThreadId !== undefined && turnSourceThreadId !== null) {
+    if (typeof turnSourceThreadId === "string") {
+      if (turnSourceThreadId.includes("\0")) {
+        throw new Error("Invalid input: turnSourceThreadId contains null bytes");
+      }
+    } else if (typeof turnSourceThreadId !== "number") {
+      throw new Error("Invalid input: turnSourceThreadId must be a string or number");
+    }
+  }
+
+  // Validate numeric fields
+  if (
+    params.timeoutSec !== undefined &&
+    (typeof params.timeoutSec !== "number" ||
+      !isFinite(params.timeoutSec) ||
+      params.timeoutSec <= 0)
+  ) {
+    throw new Error("Invalid input: timeoutSec must be a positive finite number");
+  }
+  if (
+    typeof params.defaultTimeoutSec !== "number" ||
+    !isFinite(params.defaultTimeoutSec) ||
+    params.defaultTimeoutSec <= 0
+  ) {
+    throw new Error("Invalid input: defaultTimeoutSec must be a positive finite number");
+  }
+  if (
+    typeof params.approvalRunningNoticeMs !== "number" ||
+    !isFinite(params.approvalRunningNoticeMs) ||
+    params.approvalRunningNoticeMs < 0
+  ) {
+    throw new Error("Invalid input: approvalRunningNoticeMs must be a non-negative finite number");
+  }
+
+  return {
+    ...params,
+    command,
+    workdir,
+    env,
+    requestedEnv,
+    requestedNode,
+    boundNode,
+    sessionKey,
+    turnSourceChannel,
+    turnSourceTo,
+    turnSourceAccountId,
+    turnSourceThreadId,
+    agentId,
+    notifySessionKey,
+  };
+}
+
 export async function executeNodeHostCommand(
   params: ExecuteNodeHostCommandParams,
 ): Promise<AgentToolResult<ExecToolDetails>> {
+  // Sanitize and validate all inputs before processing
+  const sanitizedParams = sanitizeParams(params);
+
   const { hostSecurity, hostAsk, askFallback } = execHostShared.resolveExecHostApprovalContext({
-    agentId: params.agentId,
-    security: params.security,
-    ask: params.ask,
+    agentId: sanitizedParams.agentId,
+    security: sanitizedParams.security,
+    ask: sanitizedParams.ask,
     host: "node",
   });
-  if (params.boundNode && params.requestedNode && params.boundNode !== params.requestedNode) {
-    throw new Error(`exec node not allowed (bound to ${params.boundNode})`);
+  if (
+    sanitizedParams.boundNode &&
+    sanitizedParams.requestedNode &&
+    sanitizedParams.boundNode !== sanitizedParams.requestedNode
+  ) {
+    throw new Error(`exec node not allowed (bound to ${sanitizedParams.boundNode})`);
   }
-  const nodeQuery = params.boundNode || params.requestedNode;
+  const nodeQuery = sanitizedParams.boundNode || sanitizedParams.requestedNode;
   const nodes = await listNodes({});
   if (nodes.length === 0) {
     throw new Error(
@@ -95,7 +237,7 @@ export async function executeNodeHostCommand(
       "exec host=node requires a node that supports system.run (companion app or node host).",
     );
   }
-  const argv = buildNodeShellCommand(params.command, nodeInfo?.platform);
+  const argv = buildNodeShellCommand(sanitizedParams.command, nodeInfo?.platform);
   const prepareRaw = await callGatewayTool<{ payload?: unknown }>(
     "node.invoke",
     { timeoutMs: 15_000 },
@@ -104,10 +246,10 @@ export async function executeNodeHostCommand(
       command: "system.run.prepare",
       params: {
         command: argv,
-        rawCommand: params.command,
-        cwd: params.workdir,
-        agentId: params.agentId,
-        sessionKey: params.sessionKey,
+        rawCommand: sanitizedParams.command,
+        cwd: sanitizedParams.workdir,
+        agentId: sanitizedParams.agentId,
+        sessionKey: sanitizedParams.sessionKey,
       },
       idempotencyKey: crypto.randomUUID(),
     },
@@ -118,24 +260,26 @@ export async function executeNodeHostCommand(
   }
   const runArgv = prepared.plan.argv;
   const runRawCommand = prepared.plan.commandText;
-  const runCwd = prepared.plan.cwd ?? params.workdir;
-  const runAgentId = prepared.plan.agentId ?? params.agentId;
-  const runSessionKey = prepared.plan.sessionKey ?? params.sessionKey;
+  const runCwd = prepared.plan.cwd ?? sanitizedParams.workdir;
+  const runAgentId = prepared.plan.agentId ?? sanitizedParams.agentId;
+  const runSessionKey = prepared.plan.sessionKey ?? sanitizedParams.sessionKey;
 
-  const nodeEnv = params.requestedEnv ? { ...params.requestedEnv } : undefined;
+  const nodeEnv = sanitizedParams.requestedEnv
+    ? { ...sanitizedParams.requestedEnv }
+    : undefined;
   const baseAllowlistEval = evaluateShellAllowlist({
-    command: params.command,
+    command: sanitizedParams.command,
     allowlist: [],
     safeBins: new Set(),
-    cwd: params.workdir,
-    env: params.env,
+    cwd: sanitizedParams.workdir,
+    env: sanitizedParams.env,
     platform: nodeInfo?.platform,
-    trustedSafeBinDirs: params.trustedSafeBinDirs,
+    trustedSafeBinDirs: sanitizedParams.trustedSafeBinDirs,
   });
   let analysisOk = baseAllowlistEval.analysisOk;
   let allowlistSatisfied = false;
   const inlineEvalHit =
-    params.strictInlineEval === true
+    sanitizedParams.strictInlineEval === true
       ? (baseAllowlistEval.segments
           .map((segment) =>
             detectInterpreterInlineEvalArgv(segment.resolution?.effectiveArgv ?? segment.argv),
@@ -143,7 +287,7 @@ export async function executeNodeHostCommand(
           .find((entry) => entry !== null) ?? null)
       : null;
   if (inlineEvalHit) {
-    params.warnings.push(
+    sanitizedParams.warnings.push(
       `Warning: strict inline-eval mode requires explicit approval for ${describeInterpreterInlineEval(
         inlineEvalHit,
       )}.`,
@@ -163,18 +307,18 @@ export async function executeNodeHostCommand(
       if (approvalsFile && typeof approvalsFile === "object") {
         const resolved = resolveExecApprovalsFromFile({
           file: approvalsFile as ExecApprovalsFile,
-          agentId: params.agentId,
+          agentId: sanitizedParams.agentId,
           overrides: { security: "allowlist" },
         });
         // Allowlist-only precheck; safe bins are node-local and may diverge.
         const allowlistEval = evaluateShellAllowlist({
-          command: params.command,
+          command: sanitizedParams.command,
           allowlist: resolved.allowlist,
           safeBins: new Set(),
-          cwd: params.workdir,
-          env: params.env,
+          cwd: sanitizedParams.workdir,
+          env: sanitizedParams.env,
           platform: nodeInfo?.platform,
-          trustedSafeBinDirs: params.trustedSafeBinDirs,
+          trustedSafeBinDirs: sanitizedParams.trustedSafeBinDirs,
         });
         allowlistSatisfied = allowlistEval.allowlistSatisfied;
         analysisOk = allowlistEval.analysisOk;
@@ -183,12 +327,14 @@ export async function executeNodeHostCommand(
       // Fall back to requiring approval if node approvals cannot be fetched.
     }
   }
-  const obfuscation = detectCommandObfuscation(params.command);
+  const obfuscation = detectCommandObfuscation(sanitizedParams.command);
   if (obfuscation.detected) {
     logInfo(
       `exec: obfuscation detected (node=${nodeQuery ?? "default"}): ${obfuscation.reasons.join(", ")}`,
     );
-    params.warnings.push(`⚠️ Obfuscated command detected: ${obfuscation.reasons.join("; ")}`);
+    sanitizedParams.warnings.push(
+      `⚠️ Obfuscated command detected: ${obfuscation.reasons.join("; ")}`,
+    );
   }
   const requiresAsk =
     requiresExecApproval({
@@ -201,7 +347,10 @@ export async function executeNodeHostCommand(
     obfuscation.detected;
   const invokeTimeoutMs = Math.max(
     10_000,
-    (typeof params.timeoutSec === "number" ? params.timeoutSec : params.defaultTimeoutSec) * 1000 +
+    (typeof sanitizedParams.timeoutSec === "number"
+      ? sanitizedParams.timeoutSec
+      : sanitizedParams.defaultTimeoutSec) *
+      1000 +
       5_000,
   );
   const buildInvokeParams = (
@@ -218,7 +367,10 @@ export async function executeNodeHostCommand(
         rawCommand: runRawCommand,
         cwd: runCwd,
         env: nodeEnv,
-        timeoutMs: typeof params.timeoutSec === "number" ? params.timeoutSec * 1000 : undefined,
+        timeoutMs:
+          typeof sanitizedParams.timeoutSec === "number"
+            ? sanitizedParams.timeoutSec * 1000
+            : undefined,
         agentId: runAgentId,
         sessionKey: runSessionKey,
         approved: approvedByAsk,
@@ -234,11 +386,11 @@ export async function executeNodeHostCommand(
 
   if (requiresAsk) {
     const requestArgs = execHostShared.buildDefaultExecApprovalRequestArgs({
-      warnings: params.warnings,
-      approvalRunningNoticeMs: params.approvalRunningNoticeMs,
+      warnings: sanitizedParams.warnings,
+      approvalRunningNoticeMs: sanitizedParams.approvalRunningNoticeMs,
       createApprovalSlug,
-      turnSourceChannel: params.turnSourceChannel,
-      turnSourceAccountId: params.turnSourceAccountId,
+      turnSourceChannel: sanitizedParams.turnSourceChannel,
+      turnSourceAccountId: sanitizedParams.turnSourceAccountId,
     });
     const registerNodeApproval = async (approvalId: string) =>
       await registerExecApprovalRequestForHostOrThrow({
@@ -254,7 +406,7 @@ export async function executeNodeHostCommand(
           agentId: runAgentId,
           sessionKey: runSessionKey,
         }),
-        ...buildExecApprovalTurnSourceContext(params),
+        ...buildExecApprovalTurnSourceContext(sanitizedParams),
       });
     const {
       approvalId,
@@ -271,11 +423,11 @@ export async function executeNodeHostCommand(
     });
     const followupTarget = execHostShared.buildExecApprovalFollowupTarget({
       approvalId,
-      sessionKey: params.notifySessionKey,
-      turnSourceChannel: params.turnSourceChannel,
-      turnSourceTo: params.turnSourceTo,
-      turnSourceAccountId: params.turnSourceAccountId,
-      turnSourceThreadId: params.turnSourceThreadId,
+      sessionKey: sanitizedParams.notifySessionKey,
+      turnSourceChannel: sanitizedParams.turnSourceChannel,
+      turnSourceTo: sanitizedParams.turnSourceTo,
+      turnSourceAccountId: sanitizedParams.turnSourceAccountId,
+      turnSourceThreadId: sanitizedParams.turnSourceThreadId,
     });
 
     void (async () => {
@@ -285,7 +437,7 @@ export async function executeNodeHostCommand(
         onFailure: () =>
           void execHostShared.sendExecApprovalFollowupResult(
             followupTarget,
-            `Exec denied (node=${nodeId} id=${approvalId}, approval-request-failed): ${params.command}`,
+            `Exec denied (node=${nodeId} id=${approvalId}, approval-request-failed): ${sanitizedParams.command}`,
           ),
       });
       if (decision === undefined) {
@@ -318,7 +470,7 @@ export async function executeNodeHostCommand(
       if (deniedReason) {
         await execHostShared.sendExecApprovalFollowupResult(
           followupTarget,
-          `Exec denied (node=${nodeId} id=${approvalId}, ${deniedReason}): ${params.command}`,
+          `Exec denied (node=${nodeId} id=${approvalId}, ${deniedReason}): ${sanitizedParams.command}`,
         );
         return;
       }
@@ -357,15 +509,15 @@ export async function executeNodeHostCommand(
       } catch {
         await execHostShared.sendExecApprovalFollowupResult(
           followupTarget,
-          `Exec denied (node=${nodeId} id=${approvalId}, invoke-failed): ${params.command}`,
+          `Exec denied (node=${nodeId} id=${approvalId}, invoke-failed): ${sanitizedParams.command}`,
         );
       }
     })();
 
     return execHostShared.buildExecApprovalPendingToolResult({
       host: "node",
-      command: params.command,
-      cwd: params.workdir,
+      command: sanitizedParams.command,
+      cwd: sanitizedParams.workdir,
       warningText,
       approvalId,
       approvalSlug,
@@ -404,7 +556,7 @@ export async function executeNodeHostCommand(
       exitCode,
       durationMs: Date.now() - startedAt,
       aggregated: [stdout, stderr, errorText].filter(Boolean).join("\n"),
-      cwd: params.workdir,
+      cwd: sanitizedParams.workdir,
     } satisfies ExecToolDetails,
   };
 }
