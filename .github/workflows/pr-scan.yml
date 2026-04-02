@@ -4,10 +4,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
-jobs:
-  pr-scan:
-    name: Lineaje AI Policy Scan
-    runs-on: [self-hosted, lineaje-scanner]    # runs on your EC2 where the scripts are deployed
+jobs:                                                                                                                                                                                                                                                                                               
+  pr-scan:                                                                                                                                                                                                                                                                                          
+    name: Lineaje AI Policy Scan                                                                                                                                                                                                                                                                    
+    runs-on: [self-hosted, lineaje-scanner]
+    if: ${{ !startsWith(github.head_ref, 'remediation/') }}      # runs on your EC2 where the scripts are deployed
 
     steps:
       - name: Run PR Scan
