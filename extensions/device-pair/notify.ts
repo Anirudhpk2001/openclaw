@@ -7,6 +7,23 @@ const NOTIFY_STATE_FILE = "device-pair-notify.json";
 const NOTIFY_POLL_INTERVAL_MS = 10_000;
 const NOTIFY_MAX_SEEN_AGE_MS = 24 * 60 * 60 * 1000;
 
+const MAX_STRING_LENGTH = 1024;
+const MAX_REQUEST_ID_LENGTH = 128;
+const MAX_DEVICE_ID_LENGTH = 256;
+const MAX_DISPLAY_NAME_LENGTH = 256;
+const MAX_PLATFORM_LENGTH = 128;
+const MAX_ROLE_LENGTH = 128;
+const MAX_SCOPE_LENGTH = 128;
+const MAX_SCOPES_COUNT = 64;
+const MAX_ROLES_COUNT = 64;
+const MAX_IP_LENGTH = 64;
+const MAX_SUBSCRIBERS = 256;
+const MAX_NOTIFIED_IDS = 10_000;
+const ALLOWED_ACTIONS = new Set(["on", "off", "once", "enable", "disable", "arm", "status", ""]);
+
+const SAFE_STRING_PATTERN = /^[\w\s\-.,@:/#+!?()[\]{}'"]*$/;
+const REQUEST_ID_PATTERN = /^[\w\-]+$/;
+
 type NotifySubscription = {
   to: string;
   accountId?: string;
@@ -32,18 +49,106 @@ export type PendingPairingRequest = {
   ts?: number;
 };
 
+function sanitizeString(value: unknown, maxLength: number = MAX_STRING_LENGTH): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.slice(0, maxLength).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+}
+
+function sanitizeRequestId(value: unknown): string {
+  const s = sanitizeString(value, MAX_REQUEST_ID_LENGTH).trim();
+  if (!REQUEST_ID_PATTERN.test(s)) {
+    return "";
+  }
+  return s;
+}
+
+function sanitizeSafeString(value: unknown, maxLength: number = MAX_STRING_LENGTH): string {
+  const s = sanitizeString(value, maxLength).trim();
+  if (!s) return "";
+  if (!SAFE_STRING_PATTERN.test(s)) {
+    return s.replace(/[^\w\s\-.,@:/#+!?()[\]{}'"]/g, "");
+  }
+  return s;
+}
+
+function sanitizePendingPairingRequest(raw: unknown): PendingPairingRequest | null {
+  if (typeof raw !== "object" || raw === null) {
+    return null;
+  }
+  const record = raw as Record<string, unknown>;
+
+  const requestId = sanitizeRequestId(record.requestId);
+  if (!requestId) {
+    return null;
+  }
+
+  const deviceId = sanitizeString(record.deviceId, MAX_DEVICE_ID_LENGTH).trim();
+  if (!deviceId) {
+    return null;
+  }
+
+  const displayName = record.displayName != null
+    ? sanitizeSafeString(record.displayName, MAX_DISPLAY_NAME_LENGTH) || undefined
+    : undefined;
+
+  const platform = record.platform != null
+    ? sanitizeSafeString(record.platform, MAX_PLATFORM_LENGTH) || undefined
+    : undefined;
+
+  const role = record.role != null
+    ? sanitizeSafeString(record.role, MAX_ROLE_LENGTH) || undefined
+    : undefined;
+
+  const roles: string[] | undefined = Array.isArray(record.roles)
+    ? record.roles
+        .slice(0, MAX_ROLES_COUNT)
+        .map((r) => sanitizeSafeString(r, MAX_ROLE_LENGTH))
+        .filter((r) => r.length > 0)
+    : undefined;
+
+  const scopes: string[] | undefined = Array.isArray(record.scopes)
+    ? record.scopes
+        .slice(0, MAX_SCOPES_COUNT)
+        .map((s) => sanitizeSafeString(s, MAX_SCOPE_LENGTH))
+        .filter((s) => s.length > 0)
+    : undefined;
+
+  const remoteIp = record.remoteIp != null
+    ? sanitizeString(record.remoteIp, MAX_IP_LENGTH).trim() || undefined
+    : undefined;
+
+  const ts =
+    typeof record.ts === "number" && Number.isFinite(record.ts) && record.ts > 0
+      ? Math.trunc(record.ts)
+      : undefined;
+
+  return {
+    requestId,
+    deviceId,
+    ...(displayName !== undefined ? { displayName } : {}),
+    ...(platform !== undefined ? { platform } : {}),
+    ...(role !== undefined ? { role } : {}),
+    ...(roles !== undefined ? { roles } : {}),
+    ...(scopes !== undefined ? { scopes } : {}),
+    ...(remoteIp !== undefined ? { remoteIp } : {}),
+    ...(ts !== undefined ? { ts } : {}),
+  };
+}
+
 function formatStringList(values?: readonly string[]): string {
   if (!Array.isArray(values) || values.length === 0) {
     return "none";
   }
-  const normalized = values.map((value) => value.trim()).filter((value) => value.length > 0);
+  const normalized = values.map((value) => sanitizeSafeString(value, MAX_SCOPE_LENGTH)).filter((value) => value.length > 0);
   return normalized.length > 0 ? normalized.join(", ") : "none";
 }
 
 function formatRoleList(request: PendingPairingRequest): string {
   const role = request.role?.trim();
   if (role) {
-    return role;
+    return sanitizeSafeString(role, MAX_ROLE_LENGTH);
   }
   return formatStringList(request.roles);
 }
@@ -53,11 +158,17 @@ function formatScopeList(request: PendingPairingRequest): string {
 }
 
 export function formatPendingRequests(pending: PendingPairingRequest[]): string {
-  if (pending.length === 0) {
+  if (!Array.isArray(pending)) {
+    return "No pending device pairing requests.";
+  }
+  const sanitized = pending
+    .map((r) => sanitizePendingPairingRequest(r))
+    .filter((r): r is PendingPairingRequest => r !== null);
+  if (sanitized.length === 0) {
     return "No pending device pairing requests.";
   }
   const lines: string[] = ["Pending device pairing requests:"];
-  for (const req of pending) {
+  for (const req of sanitized) {
     const label = req.displayName?.trim() || req.deviceId;
     const platform = req.platform?.trim();
     const ip = req.remoteIp?.trim();
@@ -87,22 +198,22 @@ function normalizeNotifyState(raw: unknown): NotifyStateFile {
       : {};
 
   const subscribers: NotifySubscription[] = [];
-  for (const item of subscribersRaw) {
+  for (const item of subscribersRaw.slice(0, MAX_SUBSCRIBERS)) {
     if (typeof item !== "object" || item === null) {
       continue;
     }
     const record = item as Record<string, unknown>;
-    const to = typeof record.to === "string" ? record.to.trim() : "";
+    const to = typeof record.to === "string" ? sanitizeString(record.to, MAX_STRING_LENGTH).trim() : "";
     if (!to) {
       continue;
     }
     const accountId =
       typeof record.accountId === "string" && record.accountId.trim()
-        ? record.accountId.trim()
+        ? sanitizeString(record.accountId, MAX_STRING_LENGTH).trim() || undefined
         : undefined;
     const messageThreadId =
       typeof record.messageThreadId === "string"
-        ? record.messageThreadId.trim() || undefined
+        ? sanitizeString(record.messageThreadId, MAX_STRING_LENGTH).trim() || undefined
         : typeof record.messageThreadId === "number" && Number.isFinite(record.messageThreadId)
           ? Math.trunc(record.messageThreadId)
           : undefined;
@@ -121,14 +232,20 @@ function normalizeNotifyState(raw: unknown): NotifyStateFile {
   }
 
   const notifiedRequestIds: Record<string, number> = {};
+  let notifiedCount = 0;
   for (const [requestId, ts] of Object.entries(notifiedRaw)) {
-    if (!requestId.trim()) {
+    if (notifiedCount >= MAX_NOTIFIED_IDS) {
+      break;
+    }
+    const sanitizedId = sanitizeRequestId(requestId);
+    if (!sanitizedId) {
       continue;
     }
     if (typeof ts !== "number" || !Number.isFinite(ts) || ts <= 0) {
       continue;
     }
-    notifiedRequestIds[requestId] = Math.trunc(ts);
+    notifiedRequestIds[sanitizedId] = Math.trunc(ts);
+    notifiedCount++;
   }
 
   return { subscribers, notifiedRequestIds };
@@ -170,14 +287,27 @@ function resolveNotifyTarget(ctx: {
   accountId?: string;
   messageThreadId?: string | number;
 }): NotifyTarget | null {
-  const to = ctx.senderId?.trim() || ctx.from?.trim() || ctx.to?.trim() || "";
+  const to =
+    sanitizeString(ctx.senderId, MAX_STRING_LENGTH).trim() ||
+    sanitizeString(ctx.from, MAX_STRING_LENGTH).trim() ||
+    sanitizeString(ctx.to, MAX_STRING_LENGTH).trim() ||
+    "";
   if (!to) {
     return null;
   }
+  const accountId = ctx.accountId
+    ? sanitizeString(ctx.accountId, MAX_STRING_LENGTH).trim() || undefined
+    : undefined;
+  const messageThreadId =
+    typeof ctx.messageThreadId === "string"
+      ? sanitizeString(ctx.messageThreadId, MAX_STRING_LENGTH).trim() || undefined
+      : typeof ctx.messageThreadId === "number" && Number.isFinite(ctx.messageThreadId)
+        ? Math.trunc(ctx.messageThreadId)
+        : undefined;
   return {
     to,
-    ...(ctx.accountId ? { accountId: ctx.accountId } : {}),
-    ...(ctx.messageThreadId != null ? { messageThreadId: ctx.messageThreadId } : {}),
+    ...(accountId ? { accountId } : {}),
+    ...(messageThreadId != null ? { messageThreadId } : {}),
   };
 }
 
@@ -194,6 +324,9 @@ function upsertNotifySubscriber(
     addedAtMs: Date.now(),
   };
   if (index === -1) {
+    if (subscribers.length >= MAX_SUBSCRIBERS) {
+      return false;
+    }
     subscribers.push(next);
     return true;
   }
@@ -290,7 +423,10 @@ async function notifyPendingPairingRequests(params: {
 }): Promise<void> {
   const state = await readNotifyState(params.statePath);
   const pairing = await listDevicePairing();
-  const pending = pairing.pending as PendingPairingRequest[];
+  const rawPending = Array.isArray(pairing.pending) ? pairing.pending : [];
+  const pending = rawPending
+    .map((r) => sanitizePendingPairingRequest(r))
+    .filter((r): r is PendingPairingRequest => r !== null);
   const now = Date.now();
   const pendingIds = new Set(pending.map((entry) => entry.requestId));
   let changed = false;
@@ -397,6 +533,11 @@ export async function handleNotifyCommand(params: {
     return { text: "Pairing notifications are currently supported only on Telegram." };
   }
 
+  const action = sanitizeString(params.action, 32).trim().toLowerCase();
+  if (!ALLOWED_ACTIONS.has(action)) {
+    return { text: "Usage: /pair notify on|off|once|status" };
+  }
+
   const target = resolveNotifyTarget(params.ctx);
   if (!target) {
     return { text: "Could not resolve Telegram target for this chat." };
@@ -408,7 +549,7 @@ export async function handleNotifyCommand(params: {
   const targetKey = notifySubscriberKey(target);
   const current = state.subscribers.find((entry) => notifySubscriberKey(entry) === targetKey);
 
-  if (params.action === "on" || params.action === "enable") {
+  if (action === "on" || action === "enable") {
     if (upsertNotifySubscriber(state.subscribers, target, "persistent")) {
       await writeNotifyState(statePath, state);
     }
@@ -419,7 +560,7 @@ export async function handleNotifyCommand(params: {
     };
   }
 
-  if (params.action === "off" || params.action === "disable") {
+  if (action === "off" || action === "disable") {
     const currentIndex = state.subscribers.findIndex(
       (entry) => notifySubscriberKey(entry) === targetKey,
     );
@@ -430,7 +571,7 @@ export async function handleNotifyCommand(params: {
     return { text: "✅ Pair request notifications disabled for this Telegram chat." };
   }
 
-  if (params.action === "once" || params.action === "arm") {
+  if (action === "once" || action === "arm") {
     await armPairNotifyOnce({
       api: params.api,
       ctx: params.ctx,
@@ -442,8 +583,12 @@ export async function handleNotifyCommand(params: {
     };
   }
 
-  if (params.action === "status" || params.action === "") {
-    const pending = await listDevicePairing();
+  if (action === "status" || action === "") {
+    const pairing = await listDevicePairing();
+    const rawPending = Array.isArray(pairing.pending) ? pairing.pending : [];
+    const pending = rawPending
+      .map((r) => sanitizePendingPairingRequest(r))
+      .filter((r): r is PendingPairingRequest => r !== null);
     const enabled = Boolean(current);
     const mode = current?.mode ?? "off";
     return {
@@ -451,7 +596,7 @@ export async function handleNotifyCommand(params: {
         `Pair request notifications: ${enabled ? "enabled" : "disabled"} for this chat.`,
         `Mode: ${mode}`,
         `Subscribers: ${state.subscribers.length}`,
-        `Pending requests: ${pending.pending.length}`,
+        `Pending requests: ${pending.length}`,
         "",
         "Use /pair notify on|off|once",
       ].join("\n"),
