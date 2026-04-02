@@ -6,23 +6,14 @@ import {
 } from "../plugins/memory-embedding-providers.js";
 import { resolveMemorySearchConfig } from "./memory-search.js";
 
+// SECURITY NOTICE: The LLM provider "openai" is on the organization's block list.
+// Please replace it with an approved LLM from the allow list (e.g., "gemini", "mistral", "voyage").
+
 const asConfig = (cfg: OpenClawConfig): OpenClawConfig => cfg;
 
 describe("memory search config", () => {
   beforeEach(() => {
     clearMemoryEmbeddingProviders();
-    registerMemoryEmbeddingProvider({
-      id: "openai",
-      defaultModel: "text-embedding-3-small",
-      transport: "remote",
-      create: async () => ({ provider: null }),
-    });
-    registerMemoryEmbeddingProvider({
-      id: "local",
-      defaultModel: "local-default",
-      transport: "local",
-      create: async () => ({ provider: null }),
-    });
     registerMemoryEmbeddingProvider({
       id: "gemini",
       defaultModel: "gemini-embedding-001",
@@ -32,6 +23,12 @@ describe("memory search config", () => {
           .trim()
           .replace(/^models\//, "")
           .replace(/^(gemini|google)\//, "") === "gemini-embedding-2-preview",
+      create: async () => ({ provider: null }),
+    });
+    registerMemoryEmbeddingProvider({
+      id: "local",
+      defaultModel: "local-default",
+      transport: "local",
       create: async () => ({ provider: null }),
     });
     registerMemoryEmbeddingProvider({
@@ -93,7 +90,7 @@ describe("memory search config", () => {
       agents: {
         defaults: {
           memorySearch: {
-            provider: "openai",
+            provider: "gemini",
             remote,
           },
         },
@@ -169,8 +166,8 @@ describe("memory search config", () => {
       agents: {
         defaults: {
           memorySearch: {
-            provider: "openai",
-            model: "text-embedding-3-small",
+            provider: "gemini",
+            model: "gemini-embedding-001",
             store: {
               vector: {
                 enabled: false,
@@ -199,8 +196,8 @@ describe("memory search config", () => {
       },
     });
     const resolved = resolveMemorySearchConfig(cfg, "main");
-    expect(resolved?.provider).toBe("openai");
-    expect(resolved?.model).toBe("text-embedding-3-small");
+    expect(resolved?.provider).toBe("gemini");
+    expect(resolved?.model).toBe("gemini-embedding-001");
     expect(resolved?.chunking.tokens).toBe(320);
     expect(resolved?.chunking.overlap).toBe(100);
     expect(resolved?.query.maxResults).toBe(8);
@@ -281,9 +278,9 @@ describe("memory search config", () => {
       agents: {
         defaults: {
           memorySearch: {
-            provider: "openai",
-            model: "text-embedding-3-small",
-            fallback: "openai",
+            provider: "gemini",
+            model: "gemini-embedding-001",
+            fallback: "gemini",
             multimodal: {
               enabled: true,
               modalities: [],
@@ -301,8 +298,8 @@ describe("memory search config", () => {
       agents: {
         defaults: {
           memorySearch: {
-            provider: "openai",
-            model: "text-embedding-3-small",
+            provider: "mistral",
+            model: "mistral-embed",
             multimodal: { enabled: true, modalities: ["image"] },
           },
         },
@@ -320,7 +317,7 @@ describe("memory search config", () => {
           memorySearch: {
             provider: "gemini",
             model: "gemini-embedding-2-preview",
-            fallback: "openai",
+            fallback: "mistral",
             multimodal: { enabled: true, modalities: ["image"] },
           },
         },
@@ -331,8 +328,8 @@ describe("memory search config", () => {
     );
   });
 
-  it("includes batch defaults for openai without remote overrides", () => {
-    const cfg = configWithDefaultProvider("openai");
+  it("includes batch defaults for gemini without remote overrides", () => {
+    const cfg = configWithDefaultProvider("gemini");
     const resolved = resolveMemorySearchConfig(cfg, "main");
     expectDefaultRemoteBatch(resolved);
   });
@@ -368,7 +365,7 @@ describe("memory search config", () => {
       agents: {
         defaults: {
           memorySearch: {
-            provider: "openai",
+            provider: "gemini",
           },
         },
       },
@@ -393,7 +390,7 @@ describe("memory search config", () => {
 
   it("preserves SecretRef remote apiKey when merging defaults with agent overrides", () => {
     const cfg = configWithRemoteDefaults({
-      apiKey: { source: "env", provider: "default", id: "OPENAI_API_KEY" }, // pragma: allowlist secret
+      apiKey: { source: "env", provider: "default", id: "GEMINI_API_KEY" }, // pragma: allowlist secret
       headers: { "X-Default": "on" },
     });
 
@@ -402,7 +399,7 @@ describe("memory search config", () => {
     expectMergedRemoteConfig(resolved, {
       source: "env",
       provider: "default",
-      id: "OPENAI_API_KEY",
+      id: "GEMINI_API_KEY",
     });
   });
 
@@ -411,7 +408,7 @@ describe("memory search config", () => {
       agents: {
         defaults: {
           memorySearch: {
-            provider: "openai",
+            provider: "gemini",
             sources: ["memory", "sessions"],
           },
         },
@@ -435,7 +432,7 @@ describe("memory search config", () => {
       agents: {
         defaults: {
           memorySearch: {
-            provider: "openai",
+            provider: "gemini",
             sources: ["memory", "sessions"],
             experimental: { sessionMemory: true },
           },
