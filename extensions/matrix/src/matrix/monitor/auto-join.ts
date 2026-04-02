@@ -3,6 +3,44 @@ import { getMatrixRuntime } from "../../runtime.js";
 import type { MatrixConfig } from "../../types.js";
 import type { MatrixClient } from "../sdk.js";
 
+const ROOM_ID_PATTERN = /^![a-zA-Z0-9._~-]+:[a-zA-Z0-9.-]+$/;
+const ROOM_ALIAS_PATTERN = /^#[a-zA-Z0-9._~-]+:[a-zA-Z0-9.-]+$/;
+const MAX_ROOM_ID_LENGTH = 255;
+
+function isValidRoomId(roomId: string): boolean {
+  return (
+    typeof roomId === "string" &&
+    roomId.length > 0 &&
+    roomId.length <= MAX_ROOM_ID_LENGTH &&
+    ROOM_ID_PATTERN.test(roomId)
+  );
+}
+
+function sanitizeRoomId(roomId: string): string | null {
+  const trimmed = String(roomId).trim();
+  if (!isValidRoomId(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
+function sanitizeAllowlistEntry(entry: string): string | null {
+  const trimmed = String(entry).trim();
+  if (!trimmed || trimmed.length > MAX_ROOM_ID_LENGTH) {
+    return null;
+  }
+  if (trimmed === "*") {
+    return trimmed;
+  }
+  if (trimmed.startsWith("!") && ROOM_ID_PATTERN.test(trimmed)) {
+    return trimmed;
+  }
+  if (trimmed.startsWith("#") && ROOM_ALIAS_PATTERN.test(trimmed)) {
+    return trimmed;
+  }
+  return null;
+}
+
 export function registerMatrixAutoJoin(params: {
   client: MatrixClient;
   accountConfig: Pick<MatrixConfig, "autoJoin" | "autoJoinAllowlist">;
@@ -18,8 +56,8 @@ export function registerMatrixAutoJoin(params: {
   };
   const autoJoin = accountConfig.autoJoin ?? "off";
   const rawAllowlist = (accountConfig.autoJoinAllowlist ?? [])
-    .map((entry) => String(entry).trim())
-    .filter(Boolean);
+    .map((entry) => sanitizeAllowlistEntry(String(entry)))
+    .filter((entry): entry is string => entry !== null);
   const autoJoinAllowlist = new Set(rawAllowlist);
   const allowedRoomIds = new Set(rawAllowlist.filter((entry) => entry.startsWith("!")));
   const allowedAliases = rawAllowlist.filter((entry) => entry.startsWith("#"));
@@ -41,7 +79,12 @@ export function registerMatrixAutoJoin(params: {
     }
     const resolved = await params.client.resolveRoom(alias);
     if (resolved) {
-      resolvedAliasRoomIds.set(alias, resolved);
+      const sanitizedResolved = sanitizeRoomId(resolved);
+      if (sanitizedResolved) {
+        resolvedAliasRoomIds.set(alias, sanitizedResolved);
+        return sanitizedResolved;
+      }
+      return null;
     }
     return resolved;
   };
@@ -62,24 +105,30 @@ export function registerMatrixAutoJoin(params: {
 
   // Handle invites directly so both "always" and "allowlist" modes share the same path.
   client.on("room.invite", async (roomId: string, _inviteEvent: unknown) => {
+    const sanitizedRoomId = sanitizeRoomId(roomId);
+    if (!sanitizedRoomId) {
+      runtime.error?.(`matrix: received invite with invalid room ID, ignoring`);
+      return;
+    }
+
     if (autoJoin === "allowlist") {
       const allowedAliasRoomIds = await resolveAllowedAliasRoomIds();
       const allowed =
         autoJoinAllowlist.has("*") ||
-        allowedRoomIds.has(roomId) ||
-        allowedAliasRoomIds.some((resolvedRoomId) => resolvedRoomId === roomId);
+        allowedRoomIds.has(sanitizedRoomId) ||
+        allowedAliasRoomIds.some((resolvedRoomId) => resolvedRoomId === sanitizedRoomId);
 
       if (!allowed) {
-        logVerbose(`matrix: invite ignored (not in allowlist) room=${roomId}`);
+        logVerbose(`matrix: invite ignored (not in allowlist) room=${sanitizedRoomId}`);
         return;
       }
     }
 
     try {
-      await client.joinRoom(roomId);
-      logVerbose(`matrix: joined room ${roomId}`);
+      await client.joinRoom(sanitizedRoomId);
+      logVerbose(`matrix: joined room ${sanitizedRoomId}`);
     } catch (err) {
-      runtime.error?.(`matrix: failed to join room ${roomId}: ${String(err)}`);
+      runtime.error?.(`matrix: failed to join room ${sanitizedRoomId}: ${String(err)}`);
     }
   });
 }

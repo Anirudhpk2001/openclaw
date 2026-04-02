@@ -54,6 +54,20 @@ export function __resetDiscordThreadStarterCacheForTest() {
   DISCORD_THREAD_STARTER_CACHE.clear();
 }
 
+// Validate that a string is a safe Discord snowflake ID (numeric only)
+function isValidDiscordSnowflake(value: string): boolean {
+  return /^\d{1,20}$/.test(value);
+}
+
+// Sanitize a string value: strip null bytes and control characters, trim whitespace
+function sanitizeStringInput(value: string, maxLength = 2000): string {
+  return value
+    .replace(/\0/g, "")
+    .replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+    .trim()
+    .slice(0, maxLength);
+}
+
 // Get cached entry with TTL check, refresh LRU position on hit
 function getCachedThreadStarter(key: string, now: number): DiscordThreadStarter | undefined {
   const entry = DISCORD_THREAD_STARTER_CACHE.get(key);
@@ -137,8 +151,12 @@ export function resolveDiscordThreadChannel(params: {
   if (!messageChannelId) {
     return null;
   }
+  const sanitizedChannelId = sanitizeStringInput(messageChannelId);
+  if (!isValidDiscordSnowflake(sanitizedChannelId)) {
+    return null;
+  }
   return {
-    id: messageChannelId,
+    id: sanitizedChannelId,
     name: channelInfo?.name ?? undefined,
     parentId: channelInfo?.parentId ?? undefined,
     parent: undefined,
@@ -155,17 +173,25 @@ export async function resolveDiscordThreadParentInfo(params: {
   let parentId =
     threadChannel.parentId ?? threadChannel.parent?.id ?? channelInfo?.parentId ?? undefined;
   if (!parentId && threadChannel.id) {
-    const threadInfo = await resolveDiscordChannelInfo(client, threadChannel.id);
+    const sanitizedThreadId = sanitizeStringInput(threadChannel.id);
+    if (!isValidDiscordSnowflake(sanitizedThreadId)) {
+      return {};
+    }
+    const threadInfo = await resolveDiscordChannelInfo(client, sanitizedThreadId);
     parentId = threadInfo?.parentId ?? undefined;
   }
   if (!parentId) {
     return {};
   }
+  const sanitizedParentId = sanitizeStringInput(parentId);
+  if (!isValidDiscordSnowflake(sanitizedParentId)) {
+    return {};
+  }
   let parentName = threadChannel.parent?.name;
-  const parentInfo = await resolveDiscordChannelInfo(client, parentId);
+  const parentInfo = await resolveDiscordChannelInfo(client, sanitizedParentId);
   parentName = parentName ?? parentInfo?.name;
   const parentType = parentInfo?.type;
-  return { id: parentId, name: parentName, type: parentType };
+  return { id: sanitizedParentId, name: parentName, type: parentType };
 }
 
 export async function resolveDiscordThreadStarter(params: {
@@ -185,12 +211,20 @@ export async function resolveDiscordThreadStarter(params: {
     const parentType = params.parentType;
     const isForumParent =
       parentType === ChannelType.GuildForum || parentType === ChannelType.GuildMedia;
-    const messageChannelId = isForumParent ? params.channel.id : params.parentId;
-    if (!messageChannelId) {
+    const rawMessageChannelId = isForumParent ? params.channel.id : params.parentId;
+    if (!rawMessageChannelId) {
+      return null;
+    }
+    const messageChannelId = sanitizeStringInput(rawMessageChannelId);
+    if (!isValidDiscordSnowflake(messageChannelId)) {
+      return null;
+    }
+    const channelId = sanitizeStringInput(params.channel.id);
+    if (!isValidDiscordSnowflake(channelId)) {
       return null;
     }
     const starter = (await params.client.rest.get(
-      Routes.channelMessage(messageChannelId, params.channel.id),
+      Routes.channelMessage(messageChannelId, channelId),
     )) as {
       content?: string | null;
       embeds?: Array<{ title?: string | null; description?: string | null }>;
@@ -205,13 +239,13 @@ export async function resolveDiscordThreadStarter(params: {
     if (!starter) {
       return null;
     }
-    const content = starter.content?.trim() ?? "";
+    const content = sanitizeStringInput(starter.content?.trim() ?? "");
     const embedText = resolveDiscordEmbedText(starter.embeds?.[0]);
     const text = content || embedText;
     if (!text) {
       return null;
     }
-    const author =
+    const rawAuthor =
       starter.member?.nick ??
       starter.member?.displayName ??
       (starter.author
@@ -219,6 +253,7 @@ export async function resolveDiscordThreadStarter(params: {
           ? `${starter.author.username ?? "Unknown"}#${starter.author.discriminator}`
           : (starter.author.username ?? starter.author.id ?? "Unknown")
         : "Unknown");
+    const author = sanitizeStringInput(rawAuthor, 256);
     const timestamp = params.resolveTimestampMs(starter.timestamp);
     const payload: DiscordThreadStarter = {
       text,
@@ -244,10 +279,14 @@ export function resolveDiscordReplyTarget(opts: {
   if (!replyToId) {
     return undefined;
   }
-  if (opts.replyToMode === "all") {
-    return replyToId;
+  const sanitizedReplyToId = sanitizeStringInput(replyToId);
+  if (!isValidDiscordSnowflake(sanitizedReplyToId)) {
+    return undefined;
   }
-  return opts.hasReplied ? undefined : replyToId;
+  if (opts.replyToMode === "all") {
+    return sanitizedReplyToId;
+  }
+  return opts.hasReplied ? undefined : sanitizedReplyToId;
 }
 
 export function sanitizeDiscordThreadName(rawName: string, fallbackId: string): string {
@@ -255,11 +294,14 @@ export function sanitizeDiscordThreadName(rawName: string, fallbackId: string): 
     .replace(/<@!?\d+>/g, "") // user mentions
     .replace(/<@&\d+>/g, "") // role mentions
     .replace(/<#\d+>/g, "") // channel mentions
+    .replace(/\0/g, "") // null bytes
+    .replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "") // control characters
     .replace(/\s+/g, " ")
     .trim();
-  const baseSource = cleanedName || `Thread ${fallbackId}`;
+  const sanitizedFallbackId = sanitizeStringInput(fallbackId, 20);
+  const baseSource = cleanedName || `Thread ${sanitizedFallbackId}`;
   const base = truncateUtf16Safe(baseSource, 80);
-  return truncateUtf16Safe(base, 100) || `Thread ${fallbackId}`;
+  return truncateUtf16Safe(base, 100) || `Thread ${sanitizedFallbackId}`;
 }
 
 type DiscordReplyDeliveryPlan = {
@@ -283,12 +325,18 @@ export function resolveDiscordAutoThreadContext(params: {
   messageChannelId: string;
   createdThreadId?: string | null;
 }): DiscordAutoThreadContext | null {
-  const createdThreadId = String(params.createdThreadId ?? "").trim();
+  const createdThreadId = sanitizeStringInput(String(params.createdThreadId ?? "").trim());
   if (!createdThreadId) {
     return null;
   }
-  const messageChannelId = params.messageChannelId.trim();
+  if (!isValidDiscordSnowflake(createdThreadId)) {
+    return null;
+  }
+  const messageChannelId = sanitizeStringInput(params.messageChannelId.trim());
   if (!messageChannelId) {
+    return null;
+  }
+  if (!isValidDiscordSnowflake(messageChannelId)) {
     return null;
   }
 
@@ -407,17 +455,29 @@ export async function maybeCreateDiscordAutoThread(
   if (!messageChannelId) {
     return undefined;
   }
+  if (!isValidDiscordSnowflake(messageChannelId)) {
+    return undefined;
+  }
+  const messageId = sanitizeStringInput(params.message.id);
+  if (!isValidDiscordSnowflake(messageId)) {
+    return undefined;
+  }
   try {
     const rawThreadSource = params.baseText || params.combinedBody || "Thread";
-    const threadName = sanitizeDiscordThreadName(rawThreadSource, params.message.id);
+    const threadName = sanitizeDiscordThreadName(rawThreadSource, messageId);
 
     // Parse archive duration from config, default to 60 minutes
-    const archiveDuration = params.channelConfig?.autoArchiveDuration
+    const rawArchiveDuration = params.channelConfig?.autoArchiveDuration
       ? Number(params.channelConfig.autoArchiveDuration)
+      : 60;
+    // Validate archive duration against allowed Discord values
+    const allowedArchiveDurations = [60, 1440, 4320, 10080];
+    const archiveDuration = allowedArchiveDurations.includes(rawArchiveDuration)
+      ? rawArchiveDuration
       : 60;
 
     const created = (await params.client.rest.post(
-      `${Routes.channelMessage(messageChannelId, params.message.id)}/threads`,
+      `${Routes.channelMessage(messageChannelId, messageId)}/threads`,
       {
         body: {
           name: threadName,
@@ -425,7 +485,10 @@ export async function maybeCreateDiscordAutoThread(
         },
       },
     )) as { id?: string };
-    const createdId = created?.id ? String(created.id) : "";
+    const createdId = created?.id ? sanitizeStringInput(String(created.id)) : "";
+    if (createdId && !isValidDiscordSnowflake(createdId)) {
+      return undefined;
+    }
     if (
       createdId &&
       params.channelConfig?.autoThreadName === "generated" &&
@@ -444,7 +507,7 @@ export async function maybeCreateDiscordAutoThread(
         client: params.client,
         threadId: createdId,
         currentName: threadName,
-        fallbackId: params.message.id,
+        fallbackId: messageId,
         sourceText: rawThreadSource,
         modelRef,
         channelName: params.channelName,
@@ -456,18 +519,22 @@ export async function maybeCreateDiscordAutoThread(
     return createdId || undefined;
   } catch (err) {
     logVerbose(
-      `discord: autoThread creation failed for ${messageChannelId}/${params.message.id}: ${String(err)}`,
+      `discord: autoThread creation failed for ${messageChannelId}/${messageId}: ${String(err)}`,
     );
     // Race condition: another agent may have already created a thread on this
     // message. Re-fetch the message to check for an existing thread.
     try {
       const msg = (await params.client.rest.get(
-        Routes.channelMessage(messageChannelId, params.message.id),
+        Routes.channelMessage(messageChannelId, messageId),
       )) as { thread?: { id?: string } };
-      const existingThreadId = msg?.thread?.id ? String(msg.thread.id) : "";
+      const rawExistingThreadId = msg?.thread?.id ? sanitizeStringInput(String(msg.thread.id)) : "";
+      const existingThreadId =
+        rawExistingThreadId && isValidDiscordSnowflake(rawExistingThreadId)
+          ? rawExistingThreadId
+          : "";
       if (existingThreadId) {
         logVerbose(
-          `discord: autoThread reusing existing thread ${existingThreadId} on ${messageChannelId}/${params.message.id}`,
+          `discord: autoThread reusing existing thread ${existingThreadId} on ${messageChannelId}/${messageId}`,
         );
         return existingThreadId;
       }
@@ -490,17 +557,22 @@ function resolveDiscordThreadTitleModelRef(params: {
   if (!channel) {
     return undefined;
   }
+  const sanitizedMessageChannelId = sanitizeStringInput(params.messageChannelId);
+  if (!isValidDiscordSnowflake(sanitizedMessageChannelId)) {
+    return undefined;
+  }
   const parentSessionKey = buildAgentSessionKey({
     agentId: params.agentId,
     channel,
-    peer: { kind: "channel", id: params.messageChannelId },
+    peer: { kind: "channel", id: sanitizedMessageChannelId },
   });
   const channelLabel = params.channelName?.trim();
   const groupChannel = channelLabel ? `#${channelLabel}` : undefined;
+  const sanitizedThreadId = sanitizeStringInput(params.threadId);
   const channelOverride = resolveChannelModelOverride({
     cfg: params.cfg,
     channel,
-    groupId: params.threadId,
+    groupId: sanitizedThreadId,
     groupChannel,
     groupSubject: groupChannel,
     parentSessionKey,
@@ -521,7 +593,12 @@ async function maybeRenameDiscordAutoThread(params: {
   agentId: string;
 }): Promise<void> {
   try {
-    const fallbackName = sanitizeDiscordThreadName("", params.fallbackId);
+    const sanitizedThreadId = sanitizeStringInput(params.threadId);
+    if (!isValidDiscordSnowflake(sanitizedThreadId)) {
+      return;
+    }
+    const sanitizedFallbackId = sanitizeStringInput(params.fallbackId, 20);
+    const fallbackName = sanitizeDiscordThreadName("", sanitizedFallbackId);
     const generated = await generateThreadTitle({
       cfg: params.cfg,
       agentId: params.agentId,
@@ -533,11 +610,11 @@ async function maybeRenameDiscordAutoThread(params: {
     if (!generated) {
       return;
     }
-    const nextName = sanitizeDiscordThreadName(generated, params.fallbackId);
+    const nextName = sanitizeDiscordThreadName(generated, sanitizedFallbackId);
     if (!nextName || nextName === params.currentName || nextName === fallbackName) {
       return;
     }
-    await params.client.rest.patch(Routes.channel(params.threadId), {
+    await params.client.rest.patch(Routes.channel(sanitizedThreadId), {
       body: { name: nextName },
     });
   } catch (err) {
@@ -558,8 +635,11 @@ export function resolveDiscordReplyDeliveryPlan(params: {
 
   // When a new thread was created, route to the new thread.
   if (params.createdThreadId) {
-    deliverTarget = `channel:${params.createdThreadId}`;
-    replyTarget = deliverTarget;
+    const sanitizedCreatedThreadId = sanitizeStringInput(params.createdThreadId);
+    if (isValidDiscordSnowflake(sanitizedCreatedThreadId)) {
+      deliverTarget = `channel:${sanitizedCreatedThreadId}`;
+      replyTarget = deliverTarget;
+    }
   }
   const allowReference = deliverTarget === originalReplyTarget;
   const replyReference = createReplyReferencePlanner({

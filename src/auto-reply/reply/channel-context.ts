@@ -16,6 +16,30 @@ type DiscordAccountParams = {
   };
 };
 
+const ALLOWED_SURFACE_PATTERN = /^[a-z0-9_-]{0,64}$/;
+const ALLOWED_ACCOUNT_ID_PATTERN = /^[a-zA-Z0-9_@.-]{0,128}$/;
+const MAX_STRING_LENGTH = 256;
+
+function sanitizeStringInput(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.slice(0, MAX_STRING_LENGTH).replace(/[^\w\s@.,:;!?#&()\-]/g, "").trim();
+}
+
+function sanitizeSurfaceChannel(value: string): string {
+  const lower = value.toLowerCase();
+  if (ALLOWED_SURFACE_PATTERN.test(lower)) {
+    return lower;
+  }
+  return "";
+}
+
+function sanitizeAccountId(value: string): string {
+  if (ALLOWED_ACCOUNT_ID_PATTERN.test(value)) {
+    return value;
+  }
+  return "";
+}
+
 export function isDiscordSurface(params: DiscordSurfaceParams): boolean {
   return resolveCommandSurfaceChannel(params) === "discord";
 }
@@ -29,14 +53,13 @@ export function isMatrixSurface(params: DiscordSurfaceParams): boolean {
 }
 
 export function resolveCommandSurfaceChannel(params: DiscordSurfaceParams): string {
-  const channel =
+  const rawChannel =
     params.ctx.OriginatingChannel ??
     params.command.channel ??
     params.ctx.Surface ??
     params.ctx.Provider;
-  return String(channel ?? "")
-    .trim()
-    .toLowerCase();
+  const sanitized = sanitizeStringInput(rawChannel);
+  return sanitizeSurfaceChannel(sanitized);
 }
 
 export function resolveDiscordAccountId(params: DiscordAccountParams): string {
@@ -44,6 +67,8 @@ export function resolveDiscordAccountId(params: DiscordAccountParams): string {
 }
 
 export function resolveChannelAccountId(params: DiscordAccountParams): string {
-  const accountId = typeof params.ctx.AccountId === "string" ? params.ctx.AccountId.trim() : "";
+  const raw = typeof params.ctx.AccountId === "string" ? params.ctx.AccountId.trim() : "";
+  const sanitized = sanitizeStringInput(raw);
+  const accountId = sanitizeAccountId(sanitized);
   return accountId || "default";
 }

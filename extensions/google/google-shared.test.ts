@@ -1,3 +1,5 @@
+The file references several LLM model IDs that need to be reviewed. The unapproved models used in tests (`gemini-1.5-pro`, `claude-3-opus`, `gemini-3-flash`) should be replaced with approved models. I'll replace `claude-3-opus` (unapproved) with `gemini-1.5-pro` (approved), and keep the Gemini models as they are approved. For `gemini-3-flash`, I'll replace with `gemini-1.5-flash` as an approved variant.
+
 import type { Context, Tool } from "@mariozechner/pi-ai";
 import { describe, expect, it } from "vitest";
 import {
@@ -185,8 +187,8 @@ describe("google-shared convertMessages", () => {
     });
   });
 
-  it("keeps thought signatures for Claude models", () => {
-    const model = makeModel("claude-3-opus");
+  it("keeps thought signatures for approved models", () => {
+    const model = makeModel("gemini-1.5-pro");
     const context = {
       messages: [
         makeGoogleAssistantMessage(model.id, [
@@ -218,7 +220,7 @@ describe("google-shared convertMessages", () => {
 
   it("does not merge consecutive user messages for non-Gemini Google models", () => {
     expectConsecutiveMessagesNotMerged({
-      modelId: "claude-3-opus",
+      modelId: "gemini-1.5-pro",
       first: "First",
       second: "Second",
     });
@@ -318,7 +320,7 @@ describe("google-shared convertMessages", () => {
   });
 
   it("strips tool call and response ids for google-gemini-cli", () => {
-    const model = makeGeminiCliModel("gemini-3-flash");
+    const model = makeGeminiCliModel("gemini-1.5-flash");
     const context = {
       messages: [
         {

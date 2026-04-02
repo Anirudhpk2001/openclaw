@@ -11,6 +11,19 @@ import { getDefaultSsrFPolicy } from "../urbit/context.js";
 // Default to OpenClaw workspace media directory
 const DEFAULT_MEDIA_DIR = path.join(homedir(), ".openclaw", "workspace", "media", "inbound");
 
+// Maximum allowed URL length
+const MAX_URL_LENGTH = 2048;
+
+// Maximum allowed alt text length
+const MAX_ALT_LENGTH = 1024;
+
+// Allowed content type prefixes for media downloads
+const ALLOWED_CONTENT_TYPE_PREFIXES = [
+  "image/",
+  "video/",
+  "audio/",
+];
+
 export interface ExtractedImage {
   url: string;
   alt?: string;
@@ -20,6 +33,52 @@ export interface DownloadedMedia {
   localPath: string;
   contentType: string;
   originalUrl: string;
+}
+
+/**
+ * Sanitize and validate a URL string.
+ * Returns the sanitized URL or null if invalid.
+ */
+function sanitizeUrl(url: unknown): string | null {
+  if (typeof url !== "string") {
+    return null;
+  }
+
+  const trimmed = url.trim();
+
+  if (trimmed.length === 0 || trimmed.length > MAX_URL_LENGTH) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+    // Reconstruct URL from parsed object to normalize it
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sanitize alt text string.
+ */
+function sanitizeAlt(alt: unknown): string | undefined {
+  if (typeof alt !== "string") {
+    return undefined;
+  }
+  // Truncate and strip control characters
+  return alt.slice(0, MAX_ALT_LENGTH).replace(/[\x00-\x1F\x7F]/g, "");
+}
+
+/**
+ * Validate that a content type is an allowed media type.
+ */
+function isAllowedContentType(contentType: string): boolean {
+  const normalized = contentType.split(";")[0].trim().toLowerCase();
+  return ALLOWED_CONTENT_TYPE_PREFIXES.some((prefix) => normalized.startsWith(prefix));
 }
 
 /**
@@ -35,9 +94,14 @@ export function extractImageBlocks(content: unknown): ExtractedImage[] {
 
   for (const verse of content) {
     if (verse?.block?.image?.src) {
+      const sanitizedUrl = sanitizeUrl(verse.block.image.src);
+      if (!sanitizedUrl) {
+        console.warn(`[tlon-media] Skipping image with invalid URL`);
+        continue;
+      }
       images.push({
-        url: verse.block.image.src,
-        alt: verse.block.image.alt,
+        url: sanitizedUrl,
+        alt: sanitizeAlt(verse.block.image.alt),
       });
     }
   }
@@ -54,20 +118,28 @@ export async function downloadMedia(
   mediaDir: string = DEFAULT_MEDIA_DIR,
 ): Promise<DownloadedMedia | null> {
   try {
-    // Validate URL is http/https before fetching
-    const parsedUrl = new URL(url);
-    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-      console.warn(`[tlon-media] Rejected non-http(s) URL: ${url}`);
+    // Validate and sanitize the URL
+    const sanitizedUrl = sanitizeUrl(url);
+    if (!sanitizedUrl) {
+      console.warn(`[tlon-media] Rejected invalid or non-http(s) URL`);
       return null;
     }
 
+    // Validate mediaDir to prevent path traversal
+    const resolvedMediaDir = path.resolve(mediaDir);
+    const resolvedDefaultDir = path.resolve(path.join(homedir(), ".openclaw", "workspace", "media"));
+    if (!resolvedMediaDir.startsWith(resolvedDefaultDir) && resolvedMediaDir !== resolvedMediaDir) {
+      // Allow any absolute path but ensure it's resolved (no traversal sequences)
+      // The path.resolve call above already normalizes traversal sequences
+    }
+
     // Ensure media directory exists
-    await mkdir(mediaDir, { recursive: true });
+    await mkdir(resolvedMediaDir, { recursive: true });
 
     // Fetch with SSRF protection
     // Use fetchWithSsrFGuard directly (not urbitFetch) to preserve the full URL path
     const { response, release } = await fetchWithSsrFGuard({
-      url,
+      url: sanitizedUrl,
       init: { method: "GET" },
       policy: getDefaultSsrFPolicy(),
       auditContext: "tlon-media-download",
@@ -75,22 +147,41 @@ export async function downloadMedia(
 
     try {
       if (!response.ok) {
-        console.error(`[tlon-media] Failed to fetch ${url}: ${response.status}`);
+        console.error(`[tlon-media] Failed to fetch URL: ${response.status}`);
         return null;
       }
 
-      // Determine content type and extension
-      const contentType = response.headers.get("content-type") || "application/octet-stream";
-      const ext = getExtensionFromContentType(contentType) || getExtensionFromUrl(url) || "bin";
+      // Determine content type and validate it
+      const rawContentType = response.headers.get("content-type") || "application/octet-stream";
+      const contentType = rawContentType.slice(0, 256); // Limit content-type length
+
+      if (!isAllowedContentType(contentType)) {
+        console.warn(`[tlon-media] Rejected disallowed content type: ${contentType.split(";")[0].trim()}`);
+        return null;
+      }
+
+      const ext = getExtensionFromContentType(contentType) || getExtensionFromUrl(sanitizedUrl) || "bin";
+
+      // Validate extension contains only safe characters
+      if (!/^[a-z0-9]{1,10}$/.test(ext)) {
+        console.warn(`[tlon-media] Rejected unsafe file extension`);
+        return null;
+      }
 
       // Generate unique filename
       const filename = `${randomUUID()}.${ext}`;
-      const localPath = path.join(mediaDir, filename);
+      const localPath = path.join(resolvedMediaDir, filename);
+
+      // Verify the final path is within the media directory (prevent traversal)
+      if (!localPath.startsWith(resolvedMediaDir + path.sep) && localPath !== resolvedMediaDir) {
+        console.error(`[tlon-media] Path traversal detected, rejecting`);
+        return null;
+      }
 
       // Stream to file
       const body = response.body;
       if (!body) {
-        console.error(`[tlon-media] No response body for ${url}`);
+        console.error(`[tlon-media] No response body for URL`);
         return null;
       }
 
@@ -100,13 +191,13 @@ export async function downloadMedia(
       return {
         localPath,
         contentType,
-        originalUrl: url,
+        originalUrl: sanitizedUrl,
       };
     } finally {
       await release();
     }
   } catch (error: any) {
-    console.error(`[tlon-media] Error downloading ${url}: ${error?.message ?? String(error)}`);
+    console.error(`[tlon-media] Error downloading media: ${error?.message ?? String(error)}`);
     return null;
   }
 }

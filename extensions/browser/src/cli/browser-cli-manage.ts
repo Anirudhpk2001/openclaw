@@ -18,6 +18,143 @@ import {
 
 const BROWSER_MANAGE_REQUEST_TIMEOUT_MS = 45_000;
 
+// ── Input sanitization helpers ────────────────────────────────────────────────
+
+function sanitizeString(value: unknown, maxLength = 512): string {
+  if (typeof value !== "string") {
+    throw new Error("Expected a string value");
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    throw new Error("Value must not be empty");
+  }
+  if (trimmed.length > maxLength) {
+    throw new Error(`Value exceeds maximum length of ${maxLength}`);
+  }
+  return trimmed;
+}
+
+function sanitizeProfileName(name: unknown): string {
+  const s = sanitizeString(name, 64);
+  if (!/^[a-z0-9-]+$/.test(s)) {
+    throw new Error("Profile name must contain only lowercase letters, numbers, and hyphens");
+  }
+  return s;
+}
+
+function sanitizeColor(color: unknown): string {
+  const s = sanitizeString(color, 16);
+  if (!/^#[0-9A-Fa-f]{3,8}$/.test(s)) {
+    throw new Error("Color must be a valid hex color (e.g. #0066CC)");
+  }
+  return s;
+}
+
+function sanitizeCdpUrl(url: unknown): string {
+  const s = sanitizeString(url, 2048);
+  let parsed: URL;
+  try {
+    parsed = new URL(s);
+  } catch {
+    throw new Error("cdpUrl must be a valid URL");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("cdpUrl must use http or https protocol");
+  }
+  return s;
+}
+
+function sanitizeUrl(url: unknown): string {
+  const s = sanitizeString(url, 2048);
+  let parsed: URL;
+  try {
+    parsed = new URL(s);
+  } catch {
+    throw new Error("url must be a valid URL");
+  }
+  if (!["http:", "https:", "about:", "chrome:"].includes(parsed.protocol)) {
+    throw new Error("url must use http, https, about, or chrome protocol");
+  }
+  return s;
+}
+
+function sanitizeTargetId(targetId: unknown): string {
+  const s = sanitizeString(targetId, 256);
+  if (!/^[a-zA-Z0-9_\-./]+$/.test(s)) {
+    throw new Error("targetId contains invalid characters");
+  }
+  return s;
+}
+
+function sanitizeTabIndex(index: number): number {
+  if (!Number.isFinite(index) || index < 1) {
+    throw new Error("Tab index must be a positive finite number");
+  }
+  return Math.floor(index);
+}
+
+function sanitizeUserDataDir(dir: unknown): string {
+  const s = sanitizeString(dir, 1024);
+  // Prevent path traversal
+  if (s.includes("..")) {
+    throw new Error("userDataDir must not contain path traversal sequences");
+  }
+  return s;
+}
+
+// ── Output sanitization helpers ───────────────────────────────────────────────
+
+function sanitizeOutputString(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  return String(value).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+}
+
+function sanitizeBrowserStatus(status: BrowserStatus): BrowserStatus {
+  return {
+    ...status,
+    profile: status.profile ? sanitizeOutputString(status.profile) : status.profile,
+    cdpUrl: status.cdpUrl ? sanitizeOutputString(status.cdpUrl) : status.cdpUrl,
+    userDataDir: status.userDataDir ? sanitizeOutputString(status.userDataDir) : status.userDataDir,
+    detectedExecutablePath: status.detectedExecutablePath
+      ? sanitizeOutputString(status.detectedExecutablePath)
+      : status.detectedExecutablePath,
+    executablePath: status.executablePath
+      ? sanitizeOutputString(status.executablePath)
+      : status.executablePath,
+    detectError: status.detectError
+      ? sanitizeOutputString(status.detectError)
+      : status.detectError,
+  } as BrowserStatus;
+}
+
+function sanitizeBrowserTab(tab: BrowserTab): BrowserTab {
+  return {
+    ...tab,
+    title: tab.title ? sanitizeOutputString(tab.title) : tab.title,
+    url: tab.url ? sanitizeOutputString(tab.url) : tab.url,
+    targetId: tab.targetId ? sanitizeOutputString(tab.targetId) : tab.targetId,
+  } as BrowserTab;
+}
+
+function sanitizeBrowserTabs(tabs: BrowserTab[]): BrowserTab[] {
+  return tabs.map(sanitizeBrowserTab);
+}
+
+// ── Logging helper ────────────────────────────────────────────────────────────
+
+function logMcpInteraction(
+  direction: "request" | "response",
+  method: string,
+  path: string,
+  details?: unknown,
+): void {
+  const timestamp = new Date().toISOString();
+  const detailStr = details !== undefined ? ` | ${JSON.stringify(details)}` : "";
+  defaultRuntime.log(`[MCP][${timestamp}][${direction.toUpperCase()}] ${method} ${path}${detailStr}`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function resolveProfileQuery(profile?: string) {
   return profile ? { profile } : undefined;
 }
@@ -35,7 +172,8 @@ async function callTabAction(
   profile: string | undefined,
   body: { action: "new" | "select" | "close"; index?: number },
 ) {
-  return callBrowserRequest(
+  logMcpInteraction("request", "POST", "/tabs/action", { profile, body });
+  const result = await callBrowserRequest(
     parent,
     {
       method: "POST",
@@ -45,13 +183,16 @@ async function callTabAction(
     },
     { timeoutMs: BROWSER_MANAGE_REQUEST_TIMEOUT_MS },
   );
+  logMcpInteraction("response", "POST", "/tabs/action", result);
+  return result;
 }
 
 async function fetchBrowserStatus(
   parent: BrowserParentOpts,
   profile?: string,
 ): Promise<BrowserStatus> {
-  return await callBrowserRequest<BrowserStatus>(
+  logMcpInteraction("request", "GET", "/", { profile });
+  const status = await callBrowserRequest<BrowserStatus>(
     parent,
     {
       method: "GET",
@@ -62,18 +203,23 @@ async function fetchBrowserStatus(
       timeoutMs: BROWSER_MANAGE_REQUEST_TIMEOUT_MS,
     },
   );
+  const sanitized = sanitizeBrowserStatus(status);
+  logMcpInteraction("response", "GET", "/", sanitized);
+  return sanitized;
 }
 
 async function runBrowserToggle(
   parent: BrowserParentOpts,
   params: { profile?: string; path: string },
 ) {
+  logMcpInteraction("request", "POST", params.path, { profile: params.profile });
   await callBrowserRequest(parent, {
     method: "POST",
     path: params.path,
     query: resolveProfileQuery(params.profile),
   });
   const status = await fetchBrowserStatus(parent, params.profile);
+  logMcpInteraction("response", "POST", params.path, status);
   if (printJsonResult(parent, status)) {
     return;
   }
@@ -130,6 +276,16 @@ function formatBrowserConnectionSummary(params: {
   }
   return `port: ${params.cdpPort ?? "(unset)"}`;
 }
+
+// ── POLICY NOTICE ─────────────────────────────────────────────────────────────
+// WARNING: Missing MCP client authentication is a policy violation.
+// You must add authentication to comply with the policy. All MCP client
+// connections must be authenticated before any requests are made.
+//
+// WARNING: Missing MCP server authentication is a policy violation.
+// You must implement server authentication to comply with the policy.
+// The MCP server must verify the identity of connecting clients.
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function registerBrowserManageCommands(
   browser: Command,
@@ -202,6 +358,7 @@ export function registerBrowserManageCommands(
       const parent = parentOpts(cmd);
       const profile = parent?.browserProfile;
       await runBrowserCommand(async () => {
+        logMcpInteraction("request", "POST", "/reset-profile", { profile });
         const result = await callBrowserRequest<BrowserResetProfileResult>(
           parent,
           {
@@ -211,6 +368,7 @@ export function registerBrowserManageCommands(
           },
           { timeoutMs: 20000 },
         );
+        logMcpInteraction("response", "POST", "/reset-profile", result);
         if (printJsonResult(parent, result)) {
           return;
         }
@@ -218,7 +376,7 @@ export function registerBrowserManageCommands(
           defaultRuntime.log(info(`🦞 browser profile already missing.`));
           return;
         }
-        const dest = result.to ?? result.from;
+        const dest = sanitizeOutputString(result.to ?? result.from);
         defaultRuntime.log(info(`🦞 browser profile moved to Trash (${dest})`));
       });
     });
@@ -230,6 +388,7 @@ export function registerBrowserManageCommands(
       const parent = parentOpts(cmd);
       const profile = parent?.browserProfile;
       await runBrowserCommand(async () => {
+        logMcpInteraction("request", "GET", "/tabs", { profile });
         const result = await callBrowserRequest<{ running: boolean; tabs: BrowserTab[] }>(
           parent,
           {
@@ -239,7 +398,8 @@ export function registerBrowserManageCommands(
           },
           { timeoutMs: BROWSER_MANAGE_REQUEST_TIMEOUT_MS },
         );
-        const tabs = result.tabs ?? [];
+        const tabs = sanitizeBrowserTabs(result.tabs ?? []);
+        logMcpInteraction("response", "GET", "/tabs", { running: result.running, tabCount: tabs.length });
         logBrowserTabs(tabs, parent?.json);
       });
     });
@@ -251,6 +411,7 @@ export function registerBrowserManageCommands(
       const parent = parentOpts(cmd);
       const profile = parent?.browserProfile;
       await runBrowserCommand(async () => {
+        logMcpInteraction("request", "POST", "/tabs/action", { profile, body: { action: "list" } });
         const result = await callBrowserRequest<{ ok: true; tabs: BrowserTab[] }>(
           parent,
           {
@@ -263,7 +424,8 @@ export function registerBrowserManageCommands(
           },
           { timeoutMs: BROWSER_MANAGE_REQUEST_TIMEOUT_MS },
         );
-        const tabs = result.tabs ?? [];
+        const tabs = sanitizeBrowserTabs(result.tabs ?? []);
+        logMcpInteraction("response", "POST", "/tabs/action", { tabCount: tabs.length });
         logBrowserTabs(tabs, parent?.json);
       });
     });
@@ -295,15 +457,23 @@ export function registerBrowserManageCommands(
         defaultRuntime.exit(1);
         return;
       }
+      let sanitizedIndex: number;
+      try {
+        sanitizedIndex = sanitizeTabIndex(index);
+      } catch (e) {
+        defaultRuntime.error(danger(String(e)));
+        defaultRuntime.exit(1);
+        return;
+      }
       await runBrowserCommand(async () => {
         const result = await callTabAction(parent, profile, {
           action: "select",
-          index: Math.floor(index) - 1,
+          index: sanitizedIndex - 1,
         });
         if (printJsonResult(parent, result)) {
           return;
         }
-        defaultRuntime.log(`selected tab ${Math.floor(index)}`);
+        defaultRuntime.log(`selected tab ${sanitizedIndex}`);
       });
     });
 
@@ -337,21 +507,32 @@ export function registerBrowserManageCommands(
     .action(async (url: string, _opts, cmd) => {
       const parent = parentOpts(cmd);
       const profile = parent?.browserProfile;
+      let sanitizedUrl: string;
+      try {
+        sanitizedUrl = sanitizeUrl(url);
+      } catch (e) {
+        defaultRuntime.error(danger(String(e)));
+        defaultRuntime.exit(1);
+        return;
+      }
       await runBrowserCommand(async () => {
+        logMcpInteraction("request", "POST", "/tabs/open", { profile, url: sanitizedUrl });
         const tab = await callBrowserRequest<BrowserTab>(
           parent,
           {
             method: "POST",
             path: "/tabs/open",
             query: resolveProfileQuery(profile),
-            body: { url },
+            body: { url: sanitizedUrl },
           },
           { timeoutMs: BROWSER_MANAGE_REQUEST_TIMEOUT_MS },
         );
-        if (printJsonResult(parent, tab)) {
+        const sanitizedTab = sanitizeBrowserTab(tab);
+        logMcpInteraction("response", "POST", "/tabs/open", sanitizedTab);
+        if (printJsonResult(parent, sanitizedTab)) {
           return;
         }
-        defaultRuntime.log(`opened: ${tab.url}\nid: ${tab.targetId}`);
+        defaultRuntime.log(`opened: ${sanitizedTab.url}\nid: ${sanitizedTab.targetId}`);
       });
     });
 
@@ -362,21 +543,31 @@ export function registerBrowserManageCommands(
     .action(async (targetId: string, _opts, cmd) => {
       const parent = parentOpts(cmd);
       const profile = parent?.browserProfile;
+      let sanitizedTargetId: string;
+      try {
+        sanitizedTargetId = sanitizeTargetId(targetId);
+      } catch (e) {
+        defaultRuntime.error(danger(String(e)));
+        defaultRuntime.exit(1);
+        return;
+      }
       await runBrowserCommand(async () => {
+        logMcpInteraction("request", "POST", "/tabs/focus", { profile, targetId: sanitizedTargetId });
         await callBrowserRequest(
           parent,
           {
             method: "POST",
             path: "/tabs/focus",
             query: resolveProfileQuery(profile),
-            body: { targetId },
+            body: { targetId: sanitizedTargetId },
           },
           { timeoutMs: BROWSER_MANAGE_REQUEST_TIMEOUT_MS },
         );
+        logMcpInteraction("response", "POST", "/tabs/focus", { ok: true });
         if (printJsonResult(parent, { ok: true })) {
           return;
         }
-        defaultRuntime.log(`focused tab ${targetId}`);
+        defaultRuntime.log(`focused tab ${sanitizedTargetId}`);
       });
     });
 
@@ -387,18 +578,31 @@ export function registerBrowserManageCommands(
     .action(async (targetId: string | undefined, _opts, cmd) => {
       const parent = parentOpts(cmd);
       const profile = parent?.browserProfile;
+      let sanitizedTargetId: string | undefined;
+      if (targetId?.trim()) {
+        try {
+          sanitizedTargetId = sanitizeTargetId(targetId.trim());
+        } catch (e) {
+          defaultRuntime.error(danger(String(e)));
+          defaultRuntime.exit(1);
+          return;
+        }
+      }
       await runBrowserCommand(async () => {
-        if (targetId?.trim()) {
+        if (sanitizedTargetId) {
+          logMcpInteraction("request", "DELETE", `/tabs/${sanitizedTargetId}`, { profile });
           await callBrowserRequest(
             parent,
             {
               method: "DELETE",
-              path: `/tabs/${encodeURIComponent(targetId.trim())}`,
+              path: `/tabs/${encodeURIComponent(sanitizedTargetId)}`,
               query: resolveProfileQuery(profile),
             },
             { timeoutMs: BROWSER_MANAGE_REQUEST_TIMEOUT_MS },
           );
+          logMcpInteraction("response", "DELETE", `/tabs/${sanitizedTargetId}`, { ok: true });
         } else {
+          logMcpInteraction("request", "POST", "/act", { profile, body: { kind: "close" } });
           await callBrowserRequest(
             parent,
             {
@@ -409,6 +613,7 @@ export function registerBrowserManageCommands(
             },
             { timeoutMs: BROWSER_MANAGE_REQUEST_TIMEOUT_MS },
           );
+          logMcpInteraction("response", "POST", "/act", { ok: true });
         }
         if (printJsonResult(parent, { ok: true })) {
           return;
@@ -424,6 +629,7 @@ export function registerBrowserManageCommands(
     .action(async (_opts, cmd) => {
       const parent = parentOpts(cmd);
       await runBrowserCommand(async () => {
+        logMcpInteraction("request", "GET", "/profiles", {});
         const result = await callBrowserRequest<{ profiles: ProfileStatus[] }>(
           parent,
           {
@@ -433,6 +639,7 @@ export function registerBrowserManageCommands(
           { timeoutMs: BROWSER_MANAGE_REQUEST_TIMEOUT_MS },
         );
         const profiles = result.profiles ?? [];
+        logMcpInteraction("response", "GET", "/profiles", { profileCount: profiles.length });
         if (printJsonResult(parent, { profiles })) {
           return;
         }
@@ -449,7 +656,7 @@ export function registerBrowserManageCommands(
               const loc = formatBrowserConnectionSummary(p);
               const remote = p.isRemote ? " [remote]" : "";
               const driver = p.driver !== "openclaw" ? ` [${p.driver}]` : "";
-              return `${p.name}: ${status}${tabs}${def}${remote}${driver}\n  ${loc}, color: ${p.color}`;
+              return `${sanitizeOutputString(p.name)}: ${status}${tabs}${def}${remote}${driver}\n  ${loc}, color: ${sanitizeOutputString(p.color)}`;
             })
             .join("\n"),
         );
@@ -476,30 +683,56 @@ export function registerBrowserManageCommands(
         cmd,
       ) => {
         const parent = parentOpts(cmd);
+        let sanitizedName: string;
+        let sanitizedColor: string | undefined;
+        let sanitizedCdpUrl: string | undefined;
+        let sanitizedUserDataDir: string | undefined;
+        try {
+          sanitizedName = sanitizeProfileName(opts.name);
+          sanitizedColor = opts.color ? sanitizeColor(opts.color) : undefined;
+          sanitizedCdpUrl = opts.cdpUrl ? sanitizeCdpUrl(opts.cdpUrl) : undefined;
+          sanitizedUserDataDir = opts.userDataDir ? sanitizeUserDataDir(opts.userDataDir) : undefined;
+        } catch (e) {
+          defaultRuntime.error(danger(String(e)));
+          defaultRuntime.exit(1);
+          return;
+        }
         await runBrowserCommand(async () => {
+          logMcpInteraction("request", "POST", "/profiles/create", {
+            name: sanitizedName,
+            color: sanitizedColor,
+            cdpUrl: sanitizedCdpUrl ? "[redacted]" : undefined,
+            userDataDir: sanitizedUserDataDir,
+            driver: opts.driver,
+          });
           const result = await callBrowserRequest<BrowserCreateProfileResult>(
             parent,
             {
               method: "POST",
               path: "/profiles/create",
               body: {
-                name: opts.name,
-                color: opts.color,
-                cdpUrl: opts.cdpUrl,
-                userDataDir: opts.userDataDir,
+                name: sanitizedName,
+                color: sanitizedColor,
+                cdpUrl: sanitizedCdpUrl,
+                userDataDir: sanitizedUserDataDir,
                 driver: opts.driver === "existing-session" ? "existing-session" : undefined,
               },
             },
             { timeoutMs: 10_000 },
           );
+          logMcpInteraction("response", "POST", "/profiles/create", {
+            profile: sanitizeOutputString(result.profile),
+          });
           if (printJsonResult(parent, result)) {
             return;
           }
+          const sanitizedResultProfile = sanitizeOutputString(result.profile);
+          const sanitizedResultColor = sanitizeOutputString(result.color);
           const loc = `  ${formatBrowserConnectionSummary(result)}`;
           defaultRuntime.log(
             info(
-              `🦞 Created profile "${result.profile}"\n${loc}\n  color: ${result.color}${
-                result.userDataDir ? `\n  userDataDir: ${shortenHomePath(result.userDataDir)}` : ""
+              `🦞 Created profile "${sanitizedResultProfile}"\n${loc}\n  color: ${sanitizedResultColor}${
+                result.userDataDir ? `\n  userDataDir: ${shortenHomePath(sanitizeOutputString(result.userDataDir))}` : ""
               }${opts.driver === "existing-session" ? "\n  driver: existing-session" : ""}`,
             ),
           );
@@ -513,21 +746,35 @@ export function registerBrowserManageCommands(
     .requiredOption("--name <name>", "Profile name to delete")
     .action(async (opts: { name: string }, cmd) => {
       const parent = parentOpts(cmd);
+      let sanitizedName: string;
+      try {
+        sanitizedName = sanitizeProfileName(opts.name);
+      } catch (e) {
+        defaultRuntime.error(danger(String(e)));
+        defaultRuntime.exit(1);
+        return;
+      }
       await runBrowserCommand(async () => {
+        logMcpInteraction("request", "DELETE", `/profiles/${sanitizedName}`, {});
         const result = await callBrowserRequest<BrowserDeleteProfileResult>(
           parent,
           {
             method: "DELETE",
-            path: `/profiles/${encodeURIComponent(opts.name)}`,
+            path: `/profiles/${encodeURIComponent(sanitizedName)}`,
           },
           { timeoutMs: 20_000 },
         );
+        logMcpInteraction("response", "DELETE", `/profiles/${sanitizedName}`, {
+          deleted: result.deleted,
+          profile: sanitizeOutputString(result.profile),
+        });
         if (printJsonResult(parent, result)) {
           return;
         }
+        const sanitizedResultProfile = sanitizeOutputString(result.profile);
         const msg = result.deleted
-          ? `🦞 Deleted profile "${result.profile}" (user data removed)`
-          : `🦞 Deleted profile "${result.profile}" (no user data found)`;
+          ? `🦞 Deleted profile "${sanitizedResultProfile}" (user data removed)`
+          : `🦞 Deleted profile "${sanitizedResultProfile}" (no user data found)`;
         defaultRuntime.log(info(msg));
       });
     });

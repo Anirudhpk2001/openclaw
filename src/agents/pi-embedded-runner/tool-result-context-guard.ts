@@ -27,6 +27,11 @@ export const PREEMPTIVE_TOOL_RESULT_COMPACTION_PLACEHOLDER =
 export const PREEMPTIVE_CONTEXT_OVERFLOW_MESSAGE =
   "Preemptive context overflow: estimated context size exceeds safe threshold during tool loop";
 
+// POLICY VIOLATION NOTICE: Missing authentication is a policy violation.
+// All MCP clients must implement authentication to comply with the security policy.
+// Please add authentication mechanisms to verify the identity of MCP clients
+// before processing any messages or tool results.
+
 type GuardableTransformContext = (
   messages: AgentMessage[],
   signal: AbortSignal,
@@ -37,6 +42,74 @@ type GuardableAgent = object;
 type GuardableAgentRecord = {
   transformContext?: GuardableTransformContext;
 };
+
+/**
+ * Sanitizes a string value to prevent injection attacks and remove potentially
+ * dangerous content from MCP inputs.
+ */
+function sanitizeInputString(value: string): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  // Remove null bytes
+  let sanitized = value.replace(/\0/g, "");
+  // Limit excessively long strings to prevent DoS
+  const MAX_INPUT_LENGTH = 10_000_000;
+  if (sanitized.length > MAX_INPUT_LENGTH) {
+    sanitized = sanitized.slice(0, MAX_INPUT_LENGTH);
+  }
+  return sanitized;
+}
+
+/**
+ * Validates and sanitizes an AgentMessage to ensure safe content before processing.
+ */
+function sanitizeAgentMessage(msg: AgentMessage): AgentMessage {
+  if (!msg || typeof msg !== "object") {
+    return msg;
+  }
+
+  const record = msg as unknown as Record<string, unknown>;
+  const sanitized: Record<string, unknown> = {};
+
+  for (const key of Object.keys(record)) {
+    const value = record[key];
+    if (typeof value === "string") {
+      sanitized[key] = sanitizeInputString(value);
+    } else if (Array.isArray(value)) {
+      sanitized[key] = value.map((item) => {
+        if (typeof item === "string") {
+          return sanitizeInputString(item);
+        }
+        if (item && typeof item === "object") {
+          const itemRecord = item as Record<string, unknown>;
+          const sanitizedItem: Record<string, unknown> = {};
+          for (const itemKey of Object.keys(itemRecord)) {
+            const itemValue = itemRecord[itemKey];
+            sanitizedItem[itemKey] =
+              typeof itemValue === "string" ? sanitizeInputString(itemValue) : itemValue;
+          }
+          return sanitizedItem;
+        }
+        return item;
+      });
+    } else {
+      sanitized[key] = value;
+    }
+  }
+
+  return sanitized as unknown as AgentMessage;
+}
+
+/**
+ * Sanitizes an array of AgentMessages.
+ */
+function sanitizeMessages(messages: AgentMessage[]): AgentMessage[] {
+  if (!Array.isArray(messages)) {
+    return [];
+  }
+  return messages.map(sanitizeAgentMessage);
+}
 
 function truncateTextToBudget(text: string, maxChars: number): string {
   if (text.length <= maxChars) {
@@ -213,11 +286,14 @@ export function installToolResultContextGuard(params: {
   const originalTransformContext = mutableAgent.transformContext;
 
   mutableAgent.transformContext = (async (messages: AgentMessage[], signal: AbortSignal) => {
-    const transformed = originalTransformContext
-      ? await originalTransformContext.call(mutableAgent, messages, signal)
-      : messages;
+    // Sanitize all incoming MCP messages before processing
+    const sanitizedMessages = sanitizeMessages(messages);
 
-    const contextMessages = Array.isArray(transformed) ? transformed : messages;
+    const transformed = originalTransformContext
+      ? await originalTransformContext.call(mutableAgent, sanitizedMessages, signal)
+      : sanitizedMessages;
+
+    const contextMessages = Array.isArray(transformed) ? transformed : sanitizedMessages;
     enforceToolResultContextBudgetInPlace({
       messages: contextMessages,
       contextBudgetChars,

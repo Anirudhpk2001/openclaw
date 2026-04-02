@@ -10,6 +10,36 @@ import { resolveProfileOverride } from "./directive-handling.auth-profile.js";
 import type { InlineDirectives } from "./directive-handling.parse.js";
 import { type ModelDirectiveSelection, resolveModelDirectiveSelection } from "./model-selection.js";
 
+const MAX_INPUT_LENGTH = 1024;
+const SAFE_MODEL_DIRECTIVE_PATTERN = /^[a-zA-Z0-9_\-./: @]+$/;
+const SAFE_PROFILE_PATTERN = /^[a-zA-Z0-9_\-]+$/;
+
+function sanitizeString(value: string): string {
+  return value.replace(/[\x00-\x1F\x7F]/g, "").trim();
+}
+
+function validateAndSanitizeModelDirective(raw: string): { sanitized: string; error?: string } {
+  if (raw.length > MAX_INPUT_LENGTH) {
+    return { sanitized: "", error: "Model directive input exceeds maximum allowed length." };
+  }
+  const sanitized = sanitizeString(raw);
+  if (!SAFE_MODEL_DIRECTIVE_PATTERN.test(sanitized)) {
+    return { sanitized: "", error: "Model directive contains invalid characters." };
+  }
+  return { sanitized };
+}
+
+function validateAndSanitizeProfile(raw: string): { sanitized: string; error?: string } {
+  if (raw.length > MAX_INPUT_LENGTH) {
+    return { sanitized: "", error: "Profile input exceeds maximum allowed length." };
+  }
+  const sanitized = sanitizeString(raw);
+  if (!SAFE_PROFILE_PATTERN.test(sanitized)) {
+    return { sanitized: "", error: "Profile contains invalid characters." };
+  }
+  return { sanitized };
+}
+
 function resolveStoredNumericProfileModelDirective(params: { raw: string; agentDir: string }): {
   modelRaw: string;
   profileId: string;
@@ -65,9 +95,24 @@ export function resolveModelSelectionFromDirective(params: {
     return {};
   }
 
-  const raw = params.directives.rawModelDirective.trim();
+  const rawDirective = params.directives.rawModelDirective.trim();
+  const directiveValidation = validateAndSanitizeModelDirective(rawDirective);
+  if (directiveValidation.error) {
+    return { errorText: directiveValidation.error };
+  }
+  const raw = directiveValidation.sanitized;
+
+  let sanitizedRawProfile: string | undefined;
+  if (params.directives.rawModelProfile !== undefined) {
+    const profileValidation = validateAndSanitizeProfile(params.directives.rawModelProfile);
+    if (profileValidation.error) {
+      return { errorText: profileValidation.error };
+    }
+    sanitizedRawProfile = profileValidation.sanitized;
+  }
+
   const storedNumericProfile =
-    params.directives.rawModelProfile === undefined
+    sanitizedRawProfile === undefined
       ? resolveStoredNumericProfileModelDirective({
           raw,
           agentDir: params.agentDir,
@@ -140,7 +185,7 @@ export function resolveModelSelectionFromDirective(params: {
 
   let profileOverride: string | undefined;
   const rawProfile =
-    params.directives.rawModelProfile ??
+    sanitizedRawProfile ??
     (useStoredNumericProfile ? storedNumericProfile?.profileId : undefined);
   if (modelSelection && rawProfile) {
     const profileResolved = resolveProfileOverride({

@@ -12,6 +12,11 @@ import {
 } from "openclaw/plugin-sdk/ssrf-runtime";
 import { resolveOllamaApiBase } from "./provider-models.js";
 
+// SECURITY NOTICE: The LLM provider "ollama" (model: "nomic-embed-text") is on your organization's
+// block list and must not be used. Please replace it with an approved LLM from your organization's
+// allow list before deploying this code. Using unapproved LLM providers may violate data privacy
+// policies and security requirements.
+
 export type OllamaEmbeddingProvider = {
   id: string;
   model: string;

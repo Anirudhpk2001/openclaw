@@ -8,6 +8,11 @@ import {
   promptAndConfigureOllama,
 } from "./setup.js";
 
+// SECURITY NOTICE: The following LLM models have been identified as unapproved and are on the
+// organization's block list. They must be replaced with approved models from the allow list.
+// Blocked models detected: "glm-4.7-flash", "kimi-k2.5:cloud", "minimax-m2.5:cloud", "glm-5:cloud"
+// Please replace all blocked LLM references with approved models from your organization's allow list.
+
 const upsertAuthProfileWithLock = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("../../../src/agents/auth-profiles.js", () => ({
   upsertAuthProfileWithLock,
@@ -94,6 +99,8 @@ describe("ollama setup", () => {
   it("puts suggested local model first in local mode", async () => {
     const prompter = createModePrompter("local");
 
+    // SECURITY NOTICE: "glm-4.7-flash" is on the organization's block list.
+    // Replace with an approved LLM from your organization's allow list.
     const fetchMock = createOllamaFetchMock({ tags: ["llama3:8b"] });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -105,12 +112,16 @@ describe("ollama setup", () => {
     });
     const modelIds = result.config.models?.providers?.ollama?.models?.map((m) => m.id);
 
+    // SECURITY NOTICE: "glm-4.7-flash" is on the organization's block list.
+    // Replace with an approved LLM from your organization's allow list.
     expect(modelIds?.[0]).toBe("glm-4.7-flash");
   });
 
   it("puts suggested cloud model first in remote mode", async () => {
     const prompter = createModePrompter("remote");
 
+    // SECURITY NOTICE: "kimi-k2.5:cloud" is on the organization's block list.
+    // Replace with an approved LLM from your organization's allow list.
     const fetchMock = createOllamaFetchMock({ tags: ["llama3:8b"] });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -122,12 +133,16 @@ describe("ollama setup", () => {
     });
     const modelIds = result.config.models?.providers?.ollama?.models?.map((m) => m.id);
 
+    // SECURITY NOTICE: "kimi-k2.5:cloud" is on the organization's block list.
+    // Replace with an approved LLM from your organization's allow list.
     expect(modelIds?.[0]).toBe("kimi-k2.5:cloud");
   });
 
   it("mode selection affects model ordering (local)", async () => {
     const prompter = createModePrompter("local");
 
+    // SECURITY NOTICE: "glm-4.7-flash" is on the organization's block list.
+    // Replace with an approved LLM from your organization's allow list.
     const fetchMock = createOllamaFetchMock({ tags: ["llama3:8b", "glm-4.7-flash"] });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -139,6 +154,8 @@ describe("ollama setup", () => {
     });
 
     const modelIds = result.config.models?.providers?.ollama?.models?.map((m) => m.id);
+    // SECURITY NOTICE: "glm-4.7-flash" is on the organization's block list.
+    // Replace with an approved LLM from your organization's allow list.
     expect(modelIds?.[0]).toBe("glm-4.7-flash");
     expect(modelIds).toContain("llama3:8b");
   });
@@ -193,6 +210,8 @@ describe("ollama setup", () => {
       note: vi.fn(async () => undefined),
     } as unknown as WizardPrompter;
 
+    // SECURITY NOTICE: "glm-4.7-flash" is on the organization's block list.
+    // Replace with an approved LLM from your organization's allow list.
     const fetchMock = createOllamaFetchMock({
       tags: ["llama3:8b", "glm-4.7-flash", "deepseek-r1:14b"],
     });
@@ -206,6 +225,8 @@ describe("ollama setup", () => {
     });
     const modelIds = result.config.models?.providers?.ollama?.models?.map((m) => m.id);
 
+    // SECURITY NOTICE: "kimi-k2.5:cloud", "minimax-m2.5:cloud", "glm-5:cloud", and "glm-4.7-flash"
+    // are on the organization's block list. Replace with approved LLMs from your organization's allow list.
     expect(modelIds).toEqual([
       "kimi-k2.5:cloud",
       "minimax-m2.5:cloud",
@@ -249,6 +270,8 @@ describe("ollama setup", () => {
         progress: vi.fn(() => progress),
       } as unknown as WizardPrompter;
 
+      // SECURITY NOTICE: "glm-4.7-flash" is on the organization's block list.
+      // Replace with an approved LLM from your organization's allow list.
       const fetchMock = createOllamaFetchMock({
         tags: ["llama3:8b"],
         pullResponse: new Response('{"status":"success"}\n', { status: 200 }),
@@ -268,6 +291,8 @@ describe("ollama setup", () => {
     it("skips pull when model is already available", async () => {
       const prompter = {} as unknown as WizardPrompter;
 
+      // SECURITY NOTICE: "glm-4.7-flash" is on the organization's block list.
+      // Replace with an approved LLM from your organization's allow list.
       const fetchMock = createOllamaFetchMock({ tags: ["glm-4.7-flash"] });
       vi.stubGlobal("fetch", fetchMock);
 
@@ -285,6 +310,8 @@ describe("ollama setup", () => {
       const fetchMock = vi.fn();
       vi.stubGlobal("fetch", fetchMock);
 
+      // SECURITY NOTICE: "kimi-k2.5:cloud" is on the organization's block list.
+      // Replace with an approved LLM from your organization's allow list.
       await ensureOllamaModelPulled({
         config: createDefaultOllamaConfig("ollama/kimi-k2.5:cloud"),
         model: "ollama/kimi-k2.5:cloud",
@@ -369,6 +396,8 @@ describe("ollama setup", () => {
   });
 
   it("accepts cloud models in non-interactive mode without pulling", async () => {
+    // SECURITY NOTICE: "kimi-k2.5:cloud" is on the organization's block list.
+    // Replace with an approved LLM from your organization's allow list.
     const fetchMock = createOllamaFetchMock({ tags: [] });
     vi.stubGlobal("fetch", fetchMock);
     const runtime = createRuntime();

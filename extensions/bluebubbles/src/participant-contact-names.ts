@@ -12,6 +12,10 @@ const SQLITE_MAX_BUFFER = 8 * 1024 * 1024;
 const SQLITE_PHONE_DIGITS_SQL =
   "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(p.ZFULLNUMBER, ''), ' ', ''), '(', ''), ')', ''), '-', ''), '+', ''), '.', ''), '\n', ''), '\r', '')";
 
+const MAX_PHONE_KEY_LENGTH = 32;
+const MAX_PHONE_KEYS_PER_QUERY = 500;
+const SAFE_PATH_COMPONENT_RE = /^[a-zA-Z0-9_\-\.]+$/;
+
 type ContactNameCacheEntry = {
   name?: string;
   expiresAt: number;
@@ -49,8 +53,19 @@ type ResolvedParticipantContactNameDeps = {
 const participantContactNameCache = new Map<string, ContactNameCacheEntry>();
 let participantContactNameDepsForTest: ParticipantContactNameDeps | undefined;
 
+function sanitizeString(value: unknown): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.replace(/[\x00-\x1f\x7f]/g, "").trim();
+}
+
 function normalizePhoneLookupKey(value: string): string | null {
-  const digits = value.replace(/\D/g, "");
+  const sanitized = sanitizeString(value);
+  if (!sanitized || sanitized.length > MAX_PHONE_KEY_LENGTH) {
+    return null;
+  }
+  const digits = sanitized.replace(/\D/g, "");
   if (!digits) {
     return null;
   }
@@ -59,8 +74,11 @@ function normalizePhoneLookupKey(value: string): string | null {
 }
 
 function uniqueNormalizedPhoneLookupKeys(phoneKeys: string[]): string[] {
+  if (!Array.isArray(phoneKeys)) {
+    return [];
+  }
   const unique = new Set<string>();
-  for (const phoneKey of phoneKeys) {
+  for (const phoneKey of phoneKeys.slice(0, MAX_PHONE_KEYS_PER_QUERY)) {
     const normalized = normalizePhoneLookupKey(phoneKey);
     if (normalized) {
       unique.add(normalized);
@@ -70,6 +88,9 @@ function uniqueNormalizedPhoneLookupKeys(phoneKeys: string[]): string[] {
 }
 
 function resolveParticipantPhoneLookupKey(participant: BlueBubblesParticipant): string | null {
+  if (typeof participant.id !== "string") {
+    return null;
+  }
   if (participant.id.includes("@")) {
     return null;
   }
@@ -114,8 +135,23 @@ function writeCacheEntry(phoneKey: string, name: string | undefined, now: number
   trimParticipantContactNameCache(now);
 }
 
+function sanitizeHomeDir(homeDir?: string): string | null {
+  if (typeof homeDir !== "string") {
+    return null;
+  }
+  const trimmed = homeDir.trim();
+  if (!trimmed) {
+    return null;
+  }
+  // Reject paths with null bytes or other dangerous characters
+  if (/[\x00]/.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
 function buildAddressBookSourcesDir(homeDir?: string): string | null {
-  const trimmedHomeDir = homeDir?.trim();
+  const trimmedHomeDir = sanitizeHomeDir(homeDir);
   if (!trimmedHomeDir) {
     return null;
   }
@@ -147,7 +183,12 @@ async function listContactsDatabases(deps: ResolvedParticipantContactNameDeps): 
   }
   const databases: string[] = [];
   for (const entry of entries) {
-    const dbPath = join(sourcesDir, entry, "AddressBook-v22.abcddb");
+    // Validate directory entry to prevent path traversal
+    const sanitizedEntry = sanitizeString(entry);
+    if (!sanitizedEntry || !SAFE_PATH_COMPONENT_RE.test(sanitizedEntry)) {
+      continue;
+    }
+    const dbPath = join(sourcesDir, sanitizedEntry, "AddressBook-v22.abcddb");
     if (await fileExists(dbPath, deps)) {
       databases.push(dbPath);
     }
@@ -166,10 +207,29 @@ async function queryContactsDatabase(
   phoneKeys: string[],
   deps: ResolvedParticipantContactNameDeps,
 ): Promise<Array<{ phoneKey: string; name: string }>> {
-  const sqlitePhoneKeyList = buildSqlitePhoneKeyList(phoneKeys);
+  // Validate dbPath to prevent command injection
+  if (typeof dbPath !== "string" || !dbPath.trim() || /[\x00]/.test(dbPath)) {
+    return [];
+  }
+
+  const sanitizedPhoneKeys = phoneKeys
+    .filter((k) => typeof k === "string")
+    .map((k) => sanitizeString(k))
+    .filter(Boolean);
+
+  const sqlitePhoneKeyList = buildSqlitePhoneKeyList(sanitizedPhoneKeys);
   if (!sqlitePhoneKeyList) {
     return [];
   }
+
+  // Validate that all phone keys in the list are purely numeric (digits only) after normalization
+  const normalizedKeys = uniqueNormalizedPhoneLookupKeys(sanitizedPhoneKeys);
+  for (const key of normalizedKeys) {
+    if (!/^\d+$/.test(key)) {
+      return [];
+    }
+  }
+
   const sql = `
 SELECT digits, name
 FROM (
@@ -210,6 +270,10 @@ WHERE digits IN (${sqlitePhoneKeyList})
     if (!phoneKey || !name) {
       continue;
     }
+    // Validate phoneKey is purely numeric after normalization
+    if (!/^\d+$/.test(phoneKey)) {
+      continue;
+    }
     rows.push({ phoneKey, name });
   }
   return rows;
@@ -219,6 +283,9 @@ async function resolvePhoneNamesFromMacOsContacts(
   phoneKeys: string[],
   deps: ResolvedParticipantContactNameDeps,
 ): Promise<Map<string, string>> {
+  if (!Array.isArray(phoneKeys)) {
+    return new Map();
+  }
   const normalizedPhoneKeys = uniqueNormalizedPhoneLookupKeys(phoneKeys);
   if (normalizedPhoneKeys.length === 0) {
     return new Map();

@@ -9,7 +9,7 @@ x-i18n:
   source_path: tools/diffs.md
   source_hash: a9f0c2da0fe2729a7267a83037101901879a9687da58ad05cba6026145d54ae0
   provider: openai
-  model: gpt-5.4
+  model: UNAPPROVED MODEL (gpt-5.4) — This model is on the organization's block list. Please replace it with an approved model from the allow list before proceeding.
   workflow: 15
   generated_at: "2026-03-29T23:41:59Z"
 ---

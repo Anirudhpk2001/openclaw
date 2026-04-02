@@ -15,6 +15,38 @@ function isForbiddenKey(key: string | number): boolean {
   return typeof key === "string" && FORBIDDEN_KEYS.has(key);
 }
 
+function sanitizeStringValue(value: string): string {
+  return value.replace(/[<>]/g, "").trim();
+}
+
+function sanitizeValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    return sanitizeStringValue(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(sanitizeValue);
+  }
+  if (typeof value === "object" && value !== null) {
+    const sanitized: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (!isForbiddenKey(k)) {
+        sanitized[sanitizeStringValue(k)] = sanitizeValue(v);
+      }
+    }
+    return sanitized;
+  }
+  return value;
+}
+
+function sanitizePath(path: Array<string | number>): Array<string | number> {
+  return path.map((segment) => {
+    if (typeof segment === "string") {
+      return sanitizeStringValue(segment);
+    }
+    return segment;
+  });
+}
+
 type PathContainer = {
   current: Record<string, unknown> | unknown[];
   lastKey: string | number;
@@ -71,19 +103,21 @@ export function setPathValue(
   path: Array<string | number>,
   value: unknown,
 ) {
-  const container = resolvePathContainer(obj, path, true);
+  const sanitizedPath = sanitizePath(path);
+  const sanitizedValue = sanitizeValue(value);
+  const container = resolvePathContainer(obj, sanitizedPath, true);
   if (!container) {
     return;
   }
 
   if (typeof container.lastKey === "number") {
     if (Array.isArray(container.current)) {
-      container.current[container.lastKey] = value;
+      container.current[container.lastKey] = sanitizedValue;
     }
     return;
   }
   if (typeof container.current === "object" && container.current != null) {
-    (container.current as Record<string, unknown>)[container.lastKey] = value;
+    (container.current as Record<string, unknown>)[container.lastKey] = sanitizedValue;
   }
 }
 
@@ -91,7 +125,8 @@ export function removePathValue(
   obj: Record<string, unknown> | unknown[],
   path: Array<string | number>,
 ) {
-  const container = resolvePathContainer(obj, path, false);
+  const sanitizedPath = sanitizePath(path);
+  const container = resolvePathContainer(obj, sanitizedPath, false);
   if (!container) {
     return;
   }

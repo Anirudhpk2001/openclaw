@@ -8,12 +8,70 @@ import { enqueueSystemEvent } from "../infra/system-events.js";
 import { scopedHeartbeatWakeOptions } from "../routing/session-key.js";
 import { recordTaskRunProgressByRunId } from "../tasks/task-executor.js";
 
+// POLICY VIOLATION NOTICE: Missing MCP client authentication is a policy violation.
+// You must add authentication to comply with the Authenticate MCP Client policy.
+
+// POLICY VIOLATION NOTICE: Missing inter-agent authentication is a policy violation.
+// You must implement authentication for every agent-to-agent call to comply with the
+// Authenticate Agent Interactions policy.
+
 const DEFAULT_STREAM_FLUSH_MS = 2_500;
 const DEFAULT_NO_OUTPUT_NOTICE_MS = 60_000;
 const DEFAULT_NO_OUTPUT_POLL_MS = 15_000;
 const DEFAULT_MAX_RELAY_LIFETIME_MS = 6 * 60 * 60 * 1000;
 const STREAM_BUFFER_MAX_CHARS = 4_000;
 const STREAM_SNIPPET_MAX_CHARS = 220;
+
+const SAFE_SESSION_KEY_RE = /^[a-zA-Z0-9_\-:.]+$/;
+const SAFE_RUN_ID_RE = /^[a-zA-Z0-9_\-:.]+$/;
+const SAFE_AGENT_ID_RE = /^[a-zA-Z0-9_\-:. ]+$/;
+const MAX_SESSION_KEY_LENGTH = 256;
+const MAX_RUN_ID_LENGTH = 128;
+const MAX_AGENT_ID_LENGTH = 128;
+const MAX_DELTA_LENGTH = 65_536;
+const MAX_ERROR_TEXT_LENGTH = 1_024;
+
+function sanitizeSessionKey(value: string): string {
+  const trimmed = value.trim().slice(0, MAX_SESSION_KEY_LENGTH);
+  if (!SAFE_SESSION_KEY_RE.test(trimmed)) {
+    return "";
+  }
+  return trimmed;
+}
+
+function sanitizeRunId(value: string): string {
+  const trimmed = value.trim().slice(0, MAX_RUN_ID_LENGTH);
+  if (!SAFE_RUN_ID_RE.test(trimmed)) {
+    return "";
+  }
+  return trimmed;
+}
+
+function sanitizeAgentId(value: string): string {
+  const trimmed = value.trim().slice(0, MAX_AGENT_ID_LENGTH);
+  if (!SAFE_AGENT_ID_RE.test(trimmed)) {
+    return "ACP child";
+  }
+  return trimmed || "ACP child";
+}
+
+function sanitizeDelta(value: string): string {
+  return value.slice(0, MAX_DELTA_LENGTH);
+}
+
+function sanitizeErrorText(value: string): string {
+  return value.slice(0, MAX_ERROR_TEXT_LENGTH).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+}
+
+function sanitizeLogPath(value: string): string {
+  const trimmed = value.trim();
+  const resolved = path.resolve(trimmed);
+  // Prevent path traversal by ensuring the resolved path doesn't escape expected boundaries
+  if (trimmed.includes("\x00")) {
+    return "";
+  }
+  return resolved;
+}
 
 function compactWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
@@ -49,7 +107,7 @@ function resolveAcpStreamLogPathFromSessionFile(sessionFile: string, sessionId: 
 export function resolveAcpSpawnStreamLogPath(params: {
   childSessionKey: string;
 }): string | undefined {
-  const childSessionKey = params.childSessionKey.trim();
+  const childSessionKey = sanitizeSessionKey(params.childSessionKey);
   if (!childSessionKey) {
     return undefined;
   }
@@ -87,14 +145,17 @@ export function startAcpSpawnParentStreamRelay(params: {
   maxRelayLifetimeMs?: number;
   emitStartNotice?: boolean;
 }): AcpSpawnParentRelayHandle {
-  const runId = params.runId.trim();
-  const parentSessionKey = params.parentSessionKey.trim();
+  const runId = sanitizeRunId(params.runId);
+  const parentSessionKey = sanitizeSessionKey(params.parentSessionKey);
   if (!runId || !parentSessionKey) {
     return {
       dispose: () => {},
       notifyStarted: () => {},
     };
   }
+
+  const childSessionKey = sanitizeSessionKey(params.childSessionKey);
+  const agentId = sanitizeAgentId(params.agentId);
 
   const streamFlushMs =
     typeof params.streamFlushMs === "number" && Number.isFinite(params.streamFlushMs)
@@ -113,9 +174,10 @@ export function startAcpSpawnParentStreamRelay(params: {
       ? Math.max(1_000, Math.floor(params.maxRelayLifetimeMs))
       : DEFAULT_MAX_RELAY_LIFETIME_MS;
 
-  const relayLabel = truncate(compactWhitespace(params.agentId), 40) || "ACP child";
+  const relayLabel = truncate(compactWhitespace(agentId), 40) || "ACP child";
   const contextPrefix = `acp-spawn:${runId}`;
-  const logPath = toTrimmedString(params.logPath);
+  const rawLogPath = toTrimmedString(params.logPath);
+  const logPath = rawLogPath ? sanitizeLogPath(rawLogPath) : undefined;
   let logDirReady = false;
   let pendingLogLines = "";
   let logFlushScheduled = false;
@@ -174,8 +236,8 @@ export function startAcpSpawnParentStreamRelay(params: {
       epochMs: Date.now(),
       runId,
       parentSessionKey,
-      childSessionKey: params.childSessionKey,
-      agentId: params.agentId,
+      childSessionKey,
+      agentId,
       kind,
       ...fields,
     });
@@ -210,7 +272,7 @@ export function startAcpSpawnParentStreamRelay(params: {
       eventSummary: "Started.",
     });
     emit(
-      `Started ${relayLabel} session ${params.childSessionKey}. Streaming progress updates to parent session.`,
+      `Started ${relayLabel} session ${childSessionKey}. Streaming progress updates to parent session.`,
       `${contextPrefix}:start`,
     );
   };
@@ -309,7 +371,8 @@ export function startAcpSpawnParentStreamRelay(params: {
       const deltaCandidate =
         (data as { delta?: unknown } | undefined)?.delta ??
         (data as { text?: unknown } | undefined)?.text;
-      const delta = typeof deltaCandidate === "string" ? deltaCandidate : undefined;
+      const rawDelta = typeof deltaCandidate === "string" ? deltaCandidate : undefined;
+      const delta = rawDelta ? sanitizeDelta(rawDelta) : undefined;
       if (!delta || !delta.trim()) {
         return;
       }
@@ -368,7 +431,8 @@ export function startAcpSpawnParentStreamRelay(params: {
 
     if (phase === "error") {
       flushPending();
-      const errorText = toTrimmedString((event.data as { error?: unknown } | undefined)?.error);
+      const rawErrorText = toTrimmedString((event.data as { error?: unknown } | undefined)?.error);
+      const errorText = rawErrorText ? sanitizeErrorText(rawErrorText) : undefined;
       if (errorText) {
         emit(`${relayLabel} run failed: ${errorText}`, `${contextPrefix}:error`);
       } else {

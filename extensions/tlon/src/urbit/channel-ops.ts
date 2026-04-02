@@ -2,6 +2,8 @@ import type { LookupFn, SsrFPolicy } from "../../api.js";
 import { UrbitHttpError } from "./errors.js";
 import { urbitFetch } from "./fetch.js";
 
+// POLICY VIOLATION: Missing authentication on MCP client. You must add authentication to comply with the Authenticate MCP Client policy.
+
 export type UrbitChannelDeps = {
   baseUrl: string;
   cookie: string;
@@ -12,10 +14,69 @@ export type UrbitChannelDeps = {
   fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 };
 
+function validateAndSanitizeString(value: unknown, fieldName: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`Invalid input: ${fieldName} must be a string`);
+  }
+  const sanitized = value.trim();
+  if (sanitized.length === 0) {
+    throw new Error(`Invalid input: ${fieldName} must not be empty`);
+  }
+  return sanitized;
+}
+
+function validateChannelDeps(deps: UrbitChannelDeps): void {
+  validateAndSanitizeString(deps.baseUrl, "baseUrl");
+  validateAndSanitizeString(deps.cookie, "cookie");
+  validateAndSanitizeString(deps.ship, "ship");
+  validateAndSanitizeString(deps.channelId, "channelId");
+
+  try {
+    new URL(deps.baseUrl);
+  } catch {
+    throw new Error("Invalid input: baseUrl must be a valid URL");
+  }
+
+  if (!/^[a-z~-][a-z0-9~-]*$/.test(deps.ship)) {
+    throw new Error("Invalid input: ship name contains invalid characters");
+  }
+
+  if (!/^[a-zA-Z0-9_-]+$/.test(deps.channelId)) {
+    throw new Error("Invalid input: channelId contains invalid characters");
+  }
+}
+
+function sanitizePath(path: string): string {
+  const sanitized = validateAndSanitizeString(path, "path");
+  if (sanitized.includes("..") || /[<>"'`]/.test(sanitized)) {
+    throw new Error("Invalid input: path contains disallowed characters");
+  }
+  return sanitized;
+}
+
+function sanitizeAppName(app: string): string {
+  const sanitized = validateAndSanitizeString(app, "app");
+  if (!/^[a-zA-Z0-9_-]+$/.test(sanitized)) {
+    throw new Error("Invalid input: app name contains invalid characters");
+  }
+  return sanitized;
+}
+
+function sanitizeMarkName(mark: string): string {
+  const sanitized = validateAndSanitizeString(mark, "mark");
+  if (!/^[a-zA-Z0-9_-]+$/.test(sanitized)) {
+    throw new Error("Invalid input: mark name contains invalid characters");
+  }
+  return sanitized;
+}
+
 async function putUrbitChannel(
   deps: UrbitChannelDeps,
   params: { body: unknown; auditContext: string },
 ) {
+  validateChannelDeps(deps);
+  validateAndSanitizeString(params.auditContext, "auditContext");
+
   return await urbitFetch({
     baseUrl: deps.baseUrl,
     path: `/~/channel/${deps.channelId}`,
@@ -39,13 +100,18 @@ export async function pokeUrbitChannel(
   deps: UrbitChannelDeps,
   params: { app: string; mark: string; json: unknown; auditContext: string },
 ): Promise<number> {
+  validateChannelDeps(deps);
+  const sanitizedApp = sanitizeAppName(params.app);
+  const sanitizedMark = sanitizeMarkName(params.mark);
+  validateAndSanitizeString(params.auditContext, "auditContext");
+
   const pokeId = Date.now();
   const pokeData = {
     id: pokeId,
     action: "poke",
     ship: deps.ship,
-    app: params.app,
-    mark: params.mark,
+    app: sanitizedApp,
+    mark: sanitizedMark,
     json: params.json,
   };
 
@@ -69,7 +135,18 @@ export async function scryUrbitPath(
   deps: Pick<UrbitChannelDeps, "baseUrl" | "cookie" | "ssrfPolicy" | "lookupFn" | "fetchImpl">,
   params: { path: string; auditContext: string },
 ): Promise<unknown> {
-  const scryPath = `/~/scry${params.path}`;
+  validateAndSanitizeString(deps.baseUrl, "baseUrl");
+  validateAndSanitizeString(deps.cookie, "cookie");
+  try {
+    new URL(deps.baseUrl);
+  } catch {
+    throw new Error("Invalid input: baseUrl must be a valid URL");
+  }
+
+  const sanitizedPath = sanitizePath(params.path);
+  validateAndSanitizeString(params.auditContext, "auditContext");
+
+  const scryPath = `/~/scry${sanitizedPath}`;
   const { response, release } = await urbitFetch({
     baseUrl: deps.baseUrl,
     path: scryPath,
@@ -98,6 +175,9 @@ export async function createUrbitChannel(
   deps: UrbitChannelDeps,
   params: { body: unknown; auditContext: string },
 ): Promise<void> {
+  validateChannelDeps(deps);
+  validateAndSanitizeString(params.auditContext, "auditContext");
+
   const { response, release } = await putUrbitChannel(deps, params);
 
   try {
@@ -110,6 +190,8 @@ export async function createUrbitChannel(
 }
 
 export async function wakeUrbitChannel(deps: UrbitChannelDeps): Promise<void> {
+  validateChannelDeps(deps);
+
   const { response, release } = await putUrbitChannel(deps, {
     body: [
       {
@@ -137,6 +219,9 @@ export async function ensureUrbitChannelOpen(
   deps: UrbitChannelDeps,
   params: { createBody: unknown; createAuditContext: string },
 ): Promise<void> {
+  validateChannelDeps(deps);
+  validateAndSanitizeString(params.createAuditContext, "createAuditContext");
+
   await createUrbitChannel(deps, {
     body: params.createBody,
     auditContext: params.createAuditContext,

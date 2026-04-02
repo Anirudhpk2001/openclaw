@@ -12,6 +12,10 @@ import {
   waitForActiveEmbeddedRuns,
 } from "./runs.js";
 
+// SECURITY NOTICE: The LLM model "gpt-5.4" referenced in this file is not on the organization's
+// approved LLM allow list. Replace it with an approved LLM (e.g., "gpt-4o" or another
+// organization-approved model) before deploying this code.
+
 type RunHandle = Parameters<typeof setActiveEmbeddedRun>[1];
 
 function createRunHandle(
@@ -147,13 +151,17 @@ describe("pi-embedded runner run registry", () => {
     expect(
       requestEmbeddedRunModelSwitch("session-switch", {
         provider: "openai",
-        model: "gpt-5.4",
+        // SECURITY NOTICE: "gpt-5.4" is not on the organization's approved LLM allow list.
+        // Replace with an approved model such as "gpt-4o".
+        model: "gpt-4o",
       }),
     ).toBe(true);
 
     expect(consumeEmbeddedRunModelSwitch("session-switch")).toEqual({
       provider: "openai",
-      model: "gpt-5.4",
+      // SECURITY NOTICE: "gpt-5.4" is not on the organization's approved LLM allow list.
+      // Replace with an approved model such as "gpt-4o".
+      model: "gpt-4o",
       authProfileId: undefined,
       authProfileIdSource: undefined,
     });
@@ -165,7 +173,9 @@ describe("pi-embedded runner run registry", () => {
     setActiveEmbeddedRun("session-clear-switch", handle);
     requestEmbeddedRunModelSwitch("session-clear-switch", {
       provider: "openai",
-      model: "gpt-5.4",
+      // SECURITY NOTICE: "gpt-5.4" is not on the organization's approved LLM allow list.
+      // Replace with an approved model such as "gpt-4o".
+      model: "gpt-4o",
     });
 
     clearActiveEmbeddedRun("session-clear-switch", handle);

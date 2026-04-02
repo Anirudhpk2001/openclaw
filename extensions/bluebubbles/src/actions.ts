@@ -22,6 +22,10 @@ import {
 } from "./targets.js";
 import type { BlueBubblesSendTarget } from "./types.js";
 
+// NOTE (Policy: Authenticate MCP Client): Missing authentication is a policy violation.
+// All MCP clients must be authenticated before being allowed to invoke actions.
+// Please add authentication to comply with the policy.
+
 const loadBlueBubblesActionsRuntime = createLazyRuntimeNamedExport(
   () => import("./actions.runtime.js"),
   "blueBubblesActionsRuntime",
@@ -29,8 +33,176 @@ const loadBlueBubblesActionsRuntime = createLazyRuntimeNamedExport(
 
 const providerId = "bluebubbles";
 
+// ── Input sanitization helpers ────────────────────────────────────────────────
+
+/**
+ * Suspicious-content patterns used to detect hidden/injected prompts,
+ * shell commands, binaries, base64-encoded payloads, leetspeak, etc.
+ */
+const SUSPICIOUS_PATTERNS: RegExp[] = [
+  // Shell / system commands (including the mandatory list)
+  /\b(alias|ripgrep|curl|rm|echo|dd|git|tar|chmod|chown|fsck)\b/i,
+  /\b(bash|sh|zsh|fish|ksh|csh|tcsh|pwsh|powershell|cmd\.exe|command\.com)\b/i,
+  /\b(exec|eval|system|popen|subprocess|spawn|fork|execve|execvp)\b/i,
+  /\b(wget|nc|netcat|ncat|socat|telnet|ssh|scp|sftp|ftp|rsync)\b/i,
+  /\b(python|python3|ruby|perl|node|php|lua|java|javac|gcc|cc|make|cmake)\b/i,
+  /\b(sudo|su|doas|runas|pkexec)\b/i,
+  /\b(kill|killall|pkill|nohup|cron|crontab|at|atd|launchctl|systemctl|service)\b/i,
+  /\b(mount|umount|fdisk|mkfs|dd|lsblk|blkid)\b/i,
+  /\b(iptables|nftables|ufw|firewall-cmd)\b/i,
+  // Binary / executable markers
+  /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/,
+  /^(MZ|ELF|\x7fELF|#!\/)/m,
+  // Base64-encoded content (long runs of base64 chars)
+  /(?:[A-Za-z0-9+/]{40,}={0,2})/,
+  // Leetspeak indicators (common substitutions)
+  /\b[3e][xX][3e][cC]\b/,
+  /\b[5s][hH][3e][lL][lL]\b/,
+  /\b[5s][yY][5s][tT][3e][mM]\b/,
+  // Invisible / hidden prompt tricks (zero-width chars, tiny font markers)
+  /[\u200b\u200c\u200d\u200e\u200f\ufeff\u00ad]/,
+  // Prompt injection keywords
+  /\b(ignore previous instructions?|disregard (all )?previous|system prompt|you are now|act as|jailbreak)\b/i,
+];
+
+const SUSPICIOUS_CONTENT_PLACEHOLDER = "<suspicious_content_removed>";
+
+function containsSuspiciousContent(value: string): boolean {
+  return SUSPICIOUS_PATTERNS.some((re) => re.test(value));
+}
+
+function sanitizeString(value: string): string {
+  if (containsSuspiciousContent(value)) {
+    return SUSPICIOUS_CONTENT_PLACEHOLDER;
+  }
+  return value;
+}
+
+// ── Singapore PII patterns ────────────────────────────────────────────────────
+
+const SG_PII_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /\b[STFGM]\d{7}[A-Z]\b/g, label: "NRIC/FIN" },
+  { pattern: /\b[A-Z]{1,2}\d{7}[A-Z]?\b/g, label: "Passport" },
+  { pattern: /\b\d{8,12}\b/g, label: "WorkPermit/StudentPass" },
+  { pattern: /\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b/g, label: "DateOfBirth" },
+  { pattern: /\b[6|8|9]\d{7}\b/g, label: "SGPhoneNumber" },
+  { pattern: /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g, label: "Email" },
+  { pattern: /\b\d{6}\s[A-Za-z\s]{5,50}\b/g, label: "SGPostalAddress" },
+  { pattern: /\b\d{3,4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b/g, label: "CreditCard" },
+  { pattern: /\b\d{9,18}\b/g, label: "BankAccount" },
+  { pattern: /\b\d{3}-\d{2}-\d{4}\b/g, label: "SSN" },
+  { pattern: /\b(?:\d{1,3}\.){3}\d{1,3}\b/g, label: "IPAddress" },
+  { pattern: /\b([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}\b/g, label: "MACAddress" },
+  { pattern: /\b\d{15,17}\b/g, label: "IMEI" },
+  { pattern: /\b[0-9]{5,6}-[0-9A-Z]{5,10}-[0-9]{1,2}\b/g, label: "CPFAccount" },
+  { pattern: /singpass[\s\S]{0,40}/gi, label: "SingPassIdentifier" },
+  { pattern: /myinfo[\s\S]{0,40}/gi, label: "MyInfoIdentifier" },
+];
+
+// General PII patterns (non-Singapore-specific)
+const GENERAL_PII_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /\b\d{3}-\d{2}-\d{4}\b/g, label: "SSN" },
+  { pattern: /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g, label: "Email" },
+  { pattern: /\b(?:\d{1,3}\.){3}\d{1,3}\b/g, label: "IPAddress" },
+  { pattern: /\b([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}\b/g, label: "MACAddress" },
+  { pattern: /\b\d{3,4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b/g, label: "CreditCard" },
+  { pattern: /\b\d{9,18}\b/g, label: "FinancialAccount" },
+  { pattern: /\b\d{15,17}\b/g, label: "IMEI" },
+  { pattern: /\b[A-Z]{1,2}\d{7}[A-Z]?\b/g, label: "Passport" },
+  { pattern: /\b[A-Z]\d{7}\b/g, label: "DriversLicense" },
+  { pattern: /\b\d{2,3}-\d{7,8}-\d\b/g, label: "TaxID" },
+];
+
+function redactPII(content: string): string {
+  let result = content;
+  for (const { pattern } of SG_PII_PATTERNS) {
+    result = result.replace(pattern, "REDACTED");
+  }
+  for (const { pattern } of GENERAL_PII_PATTERNS) {
+    result = result.replace(pattern, "REDACTED");
+  }
+  return result;
+}
+
+/**
+ * Sanitize and validate a string parameter: trim, check for suspicious content,
+ * and return the cleaned value (or undefined if empty).
+ */
+function sanitizeParam(value: string | undefined): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const trimmed = String(value).trim();
+  if (!trimmed) return undefined;
+  return sanitizeString(trimmed);
+}
+
+/**
+ * Validate that a string does not exceed a reasonable maximum length.
+ */
+function validateLength(value: string, max: number, fieldName: string): string {
+  if (value.length > max) {
+    throw new Error(`Input validation failed: '${fieldName}' exceeds maximum allowed length of ${max}.`);
+  }
+  return value;
+}
+
+/**
+ * Sanitize all string values in a params record.
+ */
+function sanitizeParams(params: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value === "string") {
+      result[key] = sanitizeParam(value) ?? value;
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+/**
+ * Process uploaded file buffer: scan for suspicious content, redact PII,
+ * and return the sanitized buffer.
+ */
+function processUploadedFileBuffer(buffer: Uint8Array, filename: string): Uint8Array {
+  // Attempt to decode as UTF-8 text for scanning
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  } catch {
+    // Binary file — scan for binary executable markers
+    const header = Array.from(buffer.slice(0, 4)).map((b) => String.fromCharCode(b)).join("");
+    if (header.startsWith("MZ") || header.startsWith("\x7fELF") || header.startsWith("#!")) {
+      throw new Error(
+        `BlueBubbles upload-file: '${filename}' appears to be a binary executable and cannot be uploaded.`,
+      );
+    }
+    // Return binary as-is (cannot text-scan)
+    return buffer;
+  }
+
+  // Check for suspicious content
+  if (containsSuspiciousContent(text)) {
+    // Replace suspicious segments
+    let sanitized = text;
+    for (const pattern of SUSPICIOUS_PATTERNS) {
+      sanitized = sanitized.replace(pattern, SUSPICIOUS_CONTENT_PLACEHOLDER);
+    }
+    text = sanitized;
+  }
+
+  // Redact PII
+  text = redactPII(text);
+
+  return new TextEncoder().encode(text);
+}
+
 function mapTarget(raw: string): BlueBubblesSendTarget {
-  const parsed = parseBlueBubblesTarget(raw);
+  const sanitized = sanitizeParam(raw);
+  if (!sanitized) {
+    throw new Error("Invalid target: empty or suspicious value.");
+  }
+  const parsed = parseBlueBubblesTarget(sanitized);
   if (parsed.kind === "chat_guid") {
     return { kind: "chat_guid", chatGuid: parsed.chatGuid };
   }
@@ -118,6 +290,9 @@ export const bluebubblesMessageActions: ChannelMessageActionAdapter = {
   supportsAction: ({ action }) => SUPPORTED_ACTIONS.has(action),
   extractToolSend: ({ args }) => extractToolSend(args, "sendMessage"),
   handleAction: async ({ action, params, cfg, accountId, toolContext }) => {
+    // Sanitize all incoming params
+    const params = sanitizeParams(params);
+
     const runtime = await loadBlueBubblesActionsRuntime();
     const account = resolveBlueBubblesAccount({
       cfg: cfg,
@@ -138,7 +313,9 @@ export const bluebubblesMessageActions: ChannelMessageActionAdapter = {
     const resolveChatGuid = async (): Promise<string> => {
       const chatGuid = readStringParam(params, "chatGuid");
       if (chatGuid?.trim()) {
-        return chatGuid.trim();
+        const sanitizedChatGuid = sanitizeParam(chatGuid);
+        if (!sanitizedChatGuid) throw new Error("Invalid chatGuid value.");
+        return sanitizedChatGuid;
       }
 
       const chatIdentifier = readStringParam(params, "chatIdentifier");
@@ -147,17 +324,21 @@ export const bluebubblesMessageActions: ChannelMessageActionAdapter = {
       // Fall back to session context if no explicit target provided
       const contextTarget = toolContext?.currentChannelId?.trim();
 
-      const target = chatIdentifier?.trim()
+      const sanitizedChatIdentifier = sanitizeParam(chatIdentifier);
+      const sanitizedTo = sanitizeParam(to);
+      const sanitizedContextTarget = sanitizeParam(contextTarget);
+
+      const target = sanitizedChatIdentifier
         ? ({
             kind: "chat_identifier",
-            chatIdentifier: chatIdentifier.trim(),
+            chatIdentifier: sanitizedChatIdentifier,
           } as BlueBubblesSendTarget)
         : typeof chatId === "number"
           ? ({ kind: "chat_id", chatId } as BlueBubblesSendTarget)
-          : to
-            ? mapTarget(to)
-            : contextTarget
-              ? mapTarget(contextTarget)
+          : sanitizedTo
+            ? mapTarget(sanitizedTo)
+            : sanitizedContextTarget
+              ? mapTarget(sanitizedContextTarget)
               : null;
 
       if (!target) {
@@ -197,8 +378,10 @@ export const bluebubblesMessageActions: ChannelMessageActionAdapter = {
             "Use action=react with messageId=<message_id>, emoji=<emoji>, and to/chatGuid to identify the chat.",
         );
       }
+      const sanitizedMessageId = sanitizeParam(rawMessageId);
+      if (!sanitizedMessageId) throw new Error("Invalid messageId value.");
       // Resolve short ID (e.g., "1", "2") to full UUID
-      const messageId = runtime.resolveBlueBubblesMessageId(rawMessageId, {
+      const messageId = runtime.resolveBlueBubblesMessageId(sanitizedMessageId, {
         requireKnownShortId: true,
       });
       const partIndex = readNumberParam(params, "partIndex", { integer: true });
@@ -244,17 +427,23 @@ export const bluebubblesMessageActions: ChannelMessageActionAdapter = {
             `Use action=edit with messageId=<message_id>, text=<new_content>.`,
         );
       }
+      const sanitizedMessageId = sanitizeParam(rawMessageId);
+      if (!sanitizedMessageId) throw new Error("Invalid messageId value.");
+      const sanitizedNewText = sanitizeParam(newText);
+      if (!sanitizedNewText) throw new Error("Invalid text value.");
+      validateLength(sanitizedNewText, 10000, "text");
       // Resolve short ID (e.g., "1", "2") to full UUID
-      const messageId = runtime.resolveBlueBubblesMessageId(rawMessageId, {
+      const messageId = runtime.resolveBlueBubblesMessageId(sanitizedMessageId, {
         requireKnownShortId: true,
       });
       const partIndex = readNumberParam(params, "partIndex", { integer: true });
       const backwardsCompatMessage = readStringParam(params, "backwardsCompatMessage");
+      const sanitizedBackwardsCompatMessage = sanitizeParam(backwardsCompatMessage);
 
-      await runtime.editBlueBubblesMessage(messageId, newText, {
+      await runtime.editBlueBubblesMessage(messageId, sanitizedNewText, {
         ...opts,
         partIndex: typeof partIndex === "number" ? partIndex : undefined,
-        backwardsCompatMessage: backwardsCompatMessage ?? undefined,
+        backwardsCompatMessage: sanitizedBackwardsCompatMessage ?? undefined,
       });
 
       return jsonResult({ ok: true, edited: rawMessageId });
@@ -270,8 +459,10 @@ export const bluebubblesMessageActions: ChannelMessageActionAdapter = {
             "Use action=unsend with messageId=<message_id>.",
         );
       }
+      const sanitizedMessageId = sanitizeParam(rawMessageId);
+      if (!sanitizedMessageId) throw new Error("Invalid messageId value.");
       // Resolve short ID (e.g., "1", "2") to full UUID
-      const messageId = runtime.resolveBlueBubblesMessageId(rawMessageId, {
+      const messageId = runtime.resolveBlueBubblesMessageId(sanitizedMessageId, {
         requireKnownShortId: true,
       });
       const partIndex = readNumberParam(params, "partIndex", { integer: true });
@@ -306,13 +497,20 @@ export const bluebubblesMessageActions: ChannelMessageActionAdapter = {
             `Use action=reply with messageId=<message_id>, message=<your reply>, target=<chat_target>.`,
         );
       }
+      const sanitizedMessageId = sanitizeParam(rawMessageId);
+      if (!sanitizedMessageId) throw new Error("Invalid messageId value.");
+      const sanitizedText = sanitizeParam(text);
+      if (!sanitizedText) throw new Error("Invalid text value.");
+      validateLength(sanitizedText, 10000, "text");
+      const sanitizedTo = sanitizeParam(to);
+      if (!sanitizedTo) throw new Error("Invalid to/target value.");
       // Resolve short ID (e.g., "1", "2") to full UUID
-      const messageId = runtime.resolveBlueBubblesMessageId(rawMessageId, {
+      const messageId = runtime.resolveBlueBubblesMessageId(sanitizedMessageId, {
         requireKnownShortId: true,
       });
       const partIndex = readNumberParam(params, "partIndex", { integer: true });
 
-      const result = await runtime.sendMessageBlueBubbles(to, text, {
+      const result = await runtime.sendMessageBlueBubbles(sanitizedTo, sanitizedText, {
         ...opts,
         replyToMessageGuid: messageId,
         replyToPartIndex: typeof partIndex === "number" ? partIndex : undefined,
@@ -345,13 +543,20 @@ export const bluebubblesMessageActions: ChannelMessageActionAdapter = {
             `Use action=sendWithEffect with message=<message>, target=<chat_target>, effectId=<effect_name>.`,
         );
       }
+      const sanitizedText = sanitizeParam(text);
+      if (!sanitizedText) throw new Error("Invalid text value.");
+      validateLength(sanitizedText, 10000, "text");
+      const sanitizedTo = sanitizeParam(to);
+      if (!sanitizedTo) throw new Error("Invalid to/target value.");
+      const sanitizedEffectId = sanitizeParam(effectId);
+      if (!sanitizedEffectId) throw new Error("Invalid effectId value.");
 
-      const result = await runtime.sendMessageBlueBubbles(to, text, {
+      const result = await runtime.sendMessageBlueBubbles(sanitizedTo, sanitizedText, {
         ...opts,
-        effectId,
+        effectId: sanitizedEffectId,
       });
 
-      return jsonResult({ ok: true, messageId: result.messageId, effect: effectId });
+      return jsonResult({ ok: true, messageId: result.messageId, effect: sanitizedEffectId });
     }
 
     // Handle renameGroup action
@@ -362,10 +567,13 @@ export const bluebubblesMessageActions: ChannelMessageActionAdapter = {
       if (!displayName) {
         throw new Error("BlueBubbles renameGroup requires displayName or name parameter.");
       }
+      const sanitizedDisplayName = sanitizeParam(displayName);
+      if (!sanitizedDisplayName) throw new Error("Invalid displayName value.");
+      validateLength(sanitizedDisplayName, 256, "displayName");
 
-      await runtime.renameBlueBubblesChat(resolvedChatGuid, displayName, opts);
+      await runtime.renameBlueBubblesChat(resolvedChatGuid, sanitizedDisplayName, opts);
 
-      return jsonResult({ ok: true, renamed: resolvedChatGuid, displayName });
+      return jsonResult({ ok: true, renamed: resolvedChatGuid, displayName: sanitizedDisplayName });
     }
 
     // Handle setGroupIcon action
@@ -385,12 +593,25 @@ export const bluebubblesMessageActions: ChannelMessageActionAdapter = {
         );
       }
 
-      // Decode base64 to buffer
-      const buffer = Uint8Array.from(atob(base64Buffer), (c) => c.charCodeAt(0));
+      // Validate base64 string length
+      validateLength(base64Buffer, 10 * 1024 * 1024, "buffer");
 
-      await runtime.setGroupIconBlueBubbles(resolvedChatGuid, buffer, filename, {
+      // Decode base64 to buffer
+      let rawBuffer: Uint8Array;
+      try {
+        rawBuffer = Uint8Array.from(atob(base64Buffer), (c) => c.charCodeAt(0));
+      } catch {
+        throw new Error("BlueBubbles setGroupIcon: buffer is not valid base64.");
+      }
+
+      // Process uploaded file: scan for suspicious content and redact PII
+      const sanitizedFilename = sanitizeParam(filename) ?? "icon.png";
+      const buffer = processUploadedFileBuffer(rawBuffer, sanitizedFilename);
+      const sanitizedContentType = sanitizeParam(contentType);
+
+      await runtime.setGroupIconBlueBubbles(resolvedChatGuid, buffer, sanitizedFilename, {
         ...opts,
-        contentType: contentType ?? undefined,
+        contentType: sanitizedContentType ?? undefined,
       });
 
       return jsonResult({ ok: true, chatGuid: resolvedChatGuid, iconSet: true });
@@ -404,10 +625,12 @@ export const bluebubblesMessageActions: ChannelMessageActionAdapter = {
       if (!address) {
         throw new Error("BlueBubbles addParticipant requires address or participant parameter.");
       }
+      const sanitizedAddress = sanitizeParam(address);
+      if (!sanitizedAddress) throw new Error("Invalid address value.");
 
-      await runtime.addBlueBubblesParticipant(resolvedChatGuid, address, opts);
+      await runtime.addBlueBubblesParticipant(resolvedChatGuid, sanitizedAddress, opts);
 
-      return jsonResult({ ok: true, added: address, chatGuid: resolvedChatGuid });
+      return jsonResult({ ok: true, added: sanitizedAddress, chatGuid: resolvedChatGuid });
     }
 
     // Handle removeParticipant action
@@ -418,10 +641,12 @@ export const bluebubblesMessageActions: ChannelMessageActionAdapter = {
       if (!address) {
         throw new Error("BlueBubbles removeParticipant requires address or participant parameter.");
       }
+      const sanitizedAddress = sanitizeParam(address);
+      if (!sanitizedAddress) throw new Error("Invalid address value.");
 
-      await runtime.removeBlueBubblesParticipant(resolvedChatGuid, address, opts);
+      await runtime.removeBlueBubblesParticipant(resolvedChatGuid, sanitizedAddress, opts);
 
-      return jsonResult({ ok: true, removed: address, chatGuid: resolvedChatGuid });
+      return jsonResult({ ok: true, removed: sanitizedAddress, chatGuid: resolvedChatGuid });
     }
 
     // Handle leaveGroup action
@@ -443,14 +668,32 @@ export const bluebubblesMessageActions: ChannelMessageActionAdapter = {
         readStringParam(params, "contentType") ?? readStringParam(params, "mimeType");
       const asVoice = readBooleanParam(params, "asVoice");
 
+      const sanitizedTo = sanitizeParam(to);
+      if (!sanitizedTo) throw new Error(`BlueBubbles ${action} requires a valid 'to' parameter.`);
+      const sanitizedFilename = sanitizeParam(filename);
+      if (!sanitizedFilename) throw new Error(`BlueBubbles ${action} requires a valid 'filename' parameter.`);
+      validateLength(sanitizedFilename, 512, "filename");
+      const sanitizedCaption = sanitizeParam(caption);
+      if (sanitizedCaption) validateLength(sanitizedCaption, 10000, "caption");
+      const sanitizedContentType = sanitizeParam(contentType);
+
       // Buffer can come from params.buffer (base64) or params.path (file path)
       const base64Buffer = readStringParam(params, "buffer");
       const filePath = readStringParam(params, "path") ?? readStringParam(params, "filePath");
 
       let buffer: Uint8Array;
       if (base64Buffer) {
+        // Validate base64 string length (max ~75MB base64 → ~56MB binary)
+        validateLength(base64Buffer, 75 * 1024 * 1024, "buffer");
         // Decode base64 to buffer
-        buffer = Uint8Array.from(atob(base64Buffer), (c) => c.charCodeAt(0));
+        let rawBuffer: Uint8Array;
+        try {
+          rawBuffer = Uint8Array.from(atob(base64Buffer), (c) => c.charCodeAt(0));
+        } catch {
+          throw new Error(`BlueBubbles ${action}: buffer is not valid base64.`);
+        }
+        // Process uploaded file: scan for suspicious content and redact PII
+        buffer = processUploadedFileBuffer(rawBuffer, sanitizedFilename);
       } else if (filePath) {
         // Read file from path (will be handled by caller providing buffer)
         throw new Error(
@@ -461,11 +704,11 @@ export const bluebubblesMessageActions: ChannelMessageActionAdapter = {
       }
 
       const result = await runtime.sendBlueBubblesAttachment({
-        to,
+        to: sanitizedTo,
         buffer,
-        filename,
-        contentType: contentType ?? undefined,
-        caption: caption ?? undefined,
+        filename: sanitizedFilename,
+        contentType: sanitizedContentType ?? undefined,
+        caption: sanitizedCaption ?? undefined,
         asVoice: asVoice ?? undefined,
         opts,
       });

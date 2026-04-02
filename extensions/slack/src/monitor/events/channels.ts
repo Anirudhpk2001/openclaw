@@ -12,6 +12,28 @@ import type {
   SlackChannelRenamedEvent,
 } from "../types.js";
 
+const CHANNEL_ID_PATTERN = /^[A-Z0-9]{1,32}$/i;
+const CHANNEL_NAME_PATTERN = /^[a-z0-9_\-]{1,80}$/;
+
+function sanitizeChannelId(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!CHANNEL_ID_PATTERN.test(trimmed)) return undefined;
+  return trimmed;
+}
+
+function sanitizeChannelName(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim().toLowerCase();
+  if (!CHANNEL_NAME_PATTERN.test(trimmed)) return undefined;
+  return trimmed;
+}
+
+function sanitizeString(value: unknown): string {
+  if (typeof value !== "string") return "unknown";
+  return value.replace(/[^\w\s\-.:@#]/g, "").slice(0, 256);
+}
+
 export function registerSlackChannelEvents(params: {
   ctx: SlackMonitorContext;
   trackEvent?: () => void;
@@ -57,11 +79,15 @@ export function registerSlackChannelEvents(params: {
         trackEvent?.();
 
         const payload = event as SlackChannelCreatedEvent;
-        const channelId = payload.channel?.id;
-        const channelName = payload.channel?.name;
+        const channelId = sanitizeChannelId(payload.channel?.id);
+        const channelName = sanitizeChannelName(payload.channel?.name);
+        if (!channelId && !channelName) {
+          ctx.runtime.error?.(danger(`slack channel created handler: invalid or missing channel id/name`));
+          return;
+        }
         enqueueChannelSystemEvent({ kind: "created", channelId, channelName });
       } catch (err) {
-        ctx.runtime.error?.(danger(`slack channel created handler failed: ${String(err)}`));
+        ctx.runtime.error?.(danger(`slack channel created handler failed: ${sanitizeString(String(err))}`));
       }
     },
   );
@@ -76,11 +102,15 @@ export function registerSlackChannelEvents(params: {
         trackEvent?.();
 
         const payload = event as SlackChannelRenamedEvent;
-        const channelId = payload.channel?.id;
-        const channelName = payload.channel?.name_normalized ?? payload.channel?.name;
+        const channelId = sanitizeChannelId(payload.channel?.id);
+        const channelName = sanitizeChannelName(payload.channel?.name_normalized ?? payload.channel?.name);
+        if (!channelId && !channelName) {
+          ctx.runtime.error?.(danger(`slack channel rename handler: invalid or missing channel id/name`));
+          return;
+        }
         enqueueChannelSystemEvent({ kind: "renamed", channelId, channelName });
       } catch (err) {
-        ctx.runtime.error?.(danger(`slack channel rename handler failed: ${String(err)}`));
+        ctx.runtime.error?.(danger(`slack channel rename handler failed: ${sanitizeString(String(err))}`));
       }
     },
   );
@@ -95,16 +125,17 @@ export function registerSlackChannelEvents(params: {
         trackEvent?.();
 
         const payload = event as SlackChannelIdChangedEvent;
-        const oldChannelId = payload.old_channel_id;
-        const newChannelId = payload.new_channel_id;
+        const oldChannelId = sanitizeChannelId(payload.old_channel_id);
+        const newChannelId = sanitizeChannelId(payload.new_channel_id);
         if (!oldChannelId || !newChannelId) {
+          ctx.runtime.error?.(danger(`slack channel_id_changed handler: invalid or missing channel ids`));
           return;
         }
 
         const channelInfo = await ctx.resolveChannelName(newChannelId);
         const label = resolveSlackChannelLabel({
           channelId: newChannelId,
-          channelName: channelInfo?.name,
+          channelName: sanitizeChannelName(channelInfo?.name),
         });
 
         ctx.runtime.log?.(
@@ -155,7 +186,7 @@ export function registerSlackChannelEvents(params: {
           );
         }
       } catch (err) {
-        ctx.runtime.error?.(danger(`slack channel_id_changed handler failed: ${String(err)}`));
+        ctx.runtime.error?.(danger(`slack channel_id_changed handler failed: ${sanitizeString(String(err))}`));
       }
     },
   );

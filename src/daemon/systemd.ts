@@ -38,15 +38,96 @@ import {
   parseSystemdExecStart,
 } from "./systemd-unit.js";
 
+// Allowed characters for systemd unit/service names
+const SAFE_UNIT_NAME_RE = /^[a-zA-Z0-9_:.\-@\\]+$/;
+// Maximum length for unit names
+const MAX_UNIT_NAME_LENGTH = 255;
+// Maximum length for environment variable keys
+const MAX_ENV_KEY_LENGTH = 256;
+// Maximum length for environment variable values
+const MAX_ENV_VALUE_LENGTH = 32768;
+// Maximum length for file paths
+const MAX_PATH_LENGTH = 4096;
+
+function sanitizeUnitName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    throw new Error("Unit name must not be empty.");
+  }
+  if (trimmed.length > MAX_UNIT_NAME_LENGTH) {
+    throw new Error(`Unit name exceeds maximum length of ${MAX_UNIT_NAME_LENGTH}.`);
+  }
+  if (!SAFE_UNIT_NAME_RE.test(trimmed)) {
+    throw new Error(`Unit name contains invalid characters: ${trimmed}`);
+  }
+  // Prevent path traversal
+  if (trimmed.includes("..") || trimmed.includes("/")) {
+    throw new Error(`Unit name must not contain path separators or traversal sequences.`);
+  }
+  return trimmed;
+}
+
+function sanitizeFilePath(filePath: string): string {
+  const trimmed = filePath.trim();
+  if (!trimmed) {
+    throw new Error("File path must not be empty.");
+  }
+  if (trimmed.length > MAX_PATH_LENGTH) {
+    throw new Error(`File path exceeds maximum length of ${MAX_PATH_LENGTH}.`);
+  }
+  // Normalize and check for null bytes
+  if (trimmed.includes("\0")) {
+    throw new Error("File path must not contain null bytes.");
+  }
+  return trimmed;
+}
+
+function sanitizeEnvKey(key: string): string {
+  const trimmed = key.trim();
+  if (!trimmed) {
+    throw new Error("Environment variable key must not be empty.");
+  }
+  if (trimmed.length > MAX_ENV_KEY_LENGTH) {
+    throw new Error(`Environment variable key exceeds maximum length of ${MAX_ENV_KEY_LENGTH}.`);
+  }
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed)) {
+    throw new Error(`Environment variable key contains invalid characters: ${trimmed}`);
+  }
+  return trimmed;
+}
+
+function sanitizeEnvValue(value: string): string {
+  if (value.length > MAX_ENV_VALUE_LENGTH) {
+    throw new Error(`Environment variable value exceeds maximum length of ${MAX_ENV_VALUE_LENGTH}.`);
+  }
+  // Reject null bytes
+  if (value.includes("\0")) {
+    throw new Error("Environment variable value must not contain null bytes.");
+  }
+  return value;
+}
+
+function sanitizeEnvironment(environment: Record<string, string>): Record<string, string> {
+  const sanitized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(environment)) {
+    const safeKey = sanitizeEnvKey(key);
+    const safeValue = sanitizeEnvValue(value);
+    sanitized[safeKey] = safeValue;
+  }
+  return sanitized;
+}
+
 function resolveSystemdUnitPathForName(env: GatewayServiceEnv, name: string): string {
   const home = toPosixPath(resolveHomeDir(env));
-  return path.posix.join(home, ".config", "systemd", "user", `${name}.service`);
+  const safeName = sanitizeUnitName(name);
+  return path.posix.join(home, ".config", "systemd", "user", `${safeName}.service`);
 }
 
 function resolveSystemdServiceName(env: GatewayServiceEnv): string {
   const override = env.OPENCLAW_SYSTEMD_UNIT?.trim();
   if (override) {
-    return override.endsWith(".service") ? override.slice(0, -".service".length) : override;
+    const baseName = override.endsWith(".service") ? override.slice(0, -".service".length) : override;
+    return sanitizeUnitName(baseName);
   }
   return resolveGatewaySystemdServiceName(env.OPENCLAW_PROFILE);
 }
@@ -87,7 +168,13 @@ export async function readSystemdServiceExecStart(
         const raw = line.slice("Environment=".length).trim();
         const parsed = parseSystemdEnvAssignment(raw);
         if (parsed) {
-          inlineEnvironment[parsed.key] = parsed.value;
+          try {
+            const safeKey = sanitizeEnvKey(parsed.key);
+            const safeValue = sanitizeEnvValue(parsed.value);
+            inlineEnvironment[safeKey] = safeValue;
+          } catch {
+            // Skip invalid environment entries
+          }
         }
       } else if (line.startsWith("EnvironmentFile=")) {
         const raw = line.slice("EnvironmentFile=".length).trim();
@@ -166,12 +253,20 @@ function parseEnvironmentFileLine(rawLine: string): { key: string; value: string
   ) {
     value = value.slice(1, -1);
   }
-  return { key, value };
+  // Validate key and value before returning
+  try {
+    const safeKey = sanitizeEnvKey(key);
+    const safeValue = sanitizeEnvValue(value);
+    return { key: safeKey, value: safeValue };
+  } catch {
+    return null;
+  }
 }
 
 async function readSystemdEnvironmentFile(pathname: string): Promise<Record<string, string>> {
+  const safePath = sanitizeFilePath(pathname);
   const environment: Record<string, string> = {};
-  const content = await fs.readFile(pathname, "utf8");
+  const content = await fs.readFile(safePath, "utf8");
   for (const rawLine of content.split(/\r?\n/)) {
     const parsed = parseEnvironmentFileLine(rawLine);
     if (!parsed) {
@@ -203,8 +298,13 @@ async function resolveSystemdEnvironmentFiles(params: {
       const pathname = path.posix.isAbsolute(expanded)
         ? expanded
         : path.posix.resolve(unitDir, expanded);
+      // Validate resolved path does not escape expected boundaries
+      const normalizedPath = path.posix.normalize(pathname);
+      if (normalizedPath.includes("\0")) {
+        continue;
+      }
       try {
-        const fromFile = await readSystemdEnvironmentFile(pathname);
+        const fromFile = await readSystemdEnvironmentFile(normalizedPath);
         Object.assign(resolved, fromFile);
       } catch {
         // Keep service auditing resilient even when env files are unavailable
@@ -260,7 +360,17 @@ export function parseSystemdShow(output: string): SystemdServiceInfo {
 async function execSystemctl(
   args: string[],
 ): Promise<{ stdout: string; stderr: string; code: number }> {
-  return await execFileUtf8("systemctl", args);
+  // Validate all arguments before passing to execFileUtf8
+  const sanitizedArgs = args.map((arg) => {
+    if (typeof arg !== "string") {
+      throw new Error("systemctl argument must be a string.");
+    }
+    if (arg.includes("\0")) {
+      throw new Error("systemctl argument must not contain null bytes.");
+    }
+    return arg;
+  });
+  return await execFileUtf8("systemctl", sanitizedArgs);
 }
 
 function readSystemctlDetail(result: { stdout: string; stderr: string }): string {
@@ -340,12 +450,26 @@ function resolveSystemctlMachineScopeUser(env: GatewayServiceEnv): string | null
   }
 }
 
+function sanitizeMachineUser(user: string): string {
+  const trimmed = user.trim();
+  // Only allow safe username characters to prevent injection via --machine flag
+  if (!/^[a-zA-Z0-9_.\-]+$/.test(trimmed)) {
+    throw new Error(`Invalid machine user name: ${trimmed}`);
+  }
+  return trimmed;
+}
+
 function resolveSystemctlMachineUserScopeArgs(user: string): string[] {
   const trimmedUser = user.trim();
   if (!trimmedUser) {
     return [];
   }
-  return ["--machine", `${trimmedUser}@`, "--user"];
+  try {
+    const safeUser = sanitizeMachineUser(trimmedUser);
+    return ["--machine", `${safeUser}@`, "--user"];
+  } catch {
+    return [];
+  }
 }
 
 function shouldFallbackToMachineUserScope(detail: string): boolean {
@@ -425,6 +549,9 @@ async function writeSystemdUnit({
 }: Omit<GatewayServiceInstallArgs, "stdout">): Promise<{ unitPath: string; backedUp: boolean }> {
   await assertSystemdAvailable(env);
 
+  // Sanitize environment before writing to unit file
+  const sanitizedEnvironment = environment ? sanitizeEnvironment(environment) : environment;
+
   const unitPath = resolveSystemdUnitPath(env);
   await fs.mkdir(path.dirname(unitPath), { recursive: true });
 
@@ -439,12 +566,12 @@ async function writeSystemdUnit({
     // File does not exist yet — nothing to back up.
   }
 
-  const serviceDescription = resolveGatewayServiceDescription({ env, environment, description });
+  const serviceDescription = resolveGatewayServiceDescription({ env, environment: sanitizedEnvironment, description });
   const unit = buildSystemdUnit({
     description: serviceDescription,
     programArguments,
     workingDirectory,
-    environment,
+    environment: sanitizedEnvironment,
   });
   await fs.writeFile(unitPath, unit, "utf8");
   return { unitPath, backedUp };
@@ -478,7 +605,8 @@ export async function stageSystemdService({
 
 async function activateSystemdService(params: { env: GatewayServiceEnv }) {
   const serviceName = resolveGatewaySystemdServiceName(params.env.OPENCLAW_PROFILE);
-  const unitName = `${serviceName}.service`;
+  const safeServiceName = sanitizeUnitName(serviceName);
+  const unitName = `${safeServiceName}.service`;
   const reload = await execSystemctlUser(params.env, ["daemon-reload"]);
   if (reload.code !== 0) {
     throw new Error(`systemctl daemon-reload failed: ${reload.stderr || reload.stdout}`.trim());
@@ -527,7 +655,8 @@ export async function uninstallSystemdService({
 }: GatewayServiceManageArgs): Promise<void> {
   await assertSystemdAvailable(env);
   const serviceName = resolveGatewaySystemdServiceName(env.OPENCLAW_PROFILE);
-  const unitName = `${serviceName}.service`;
+  const safeServiceName = sanitizeUnitName(serviceName);
+  const unitName = `${safeServiceName}.service`;
   await execSystemctlUser(env, ["disable", "--now", unitName]);
 
   const unitPath = resolveSystemdUnitPath(env);
@@ -548,7 +677,8 @@ async function runSystemdServiceAction(params: {
   const env = params.env ?? process.env;
   await assertSystemdAvailable(env);
   const serviceName = resolveSystemdServiceName(env);
-  const unitName = `${serviceName}.service`;
+  const safeServiceName = sanitizeUnitName(serviceName);
+  const unitName = `${safeServiceName}.service`;
   const res = await execSystemctlUser(env, [params.action, unitName]);
   if (res.code !== 0) {
     throw new Error(`systemctl ${params.action} failed: ${res.stderr || res.stdout}`.trim());
@@ -593,7 +723,8 @@ export async function isSystemdServiceEnabled(args: GatewayServiceEnvArgs): Prom
   }
 
   const serviceName = resolveSystemdServiceName(env);
-  const unitName = `${serviceName}.service`;
+  const safeServiceName = sanitizeUnitName(serviceName);
+  const unitName = `${safeServiceName}.service`;
   const res = await execSystemctlUser(env, ["is-enabled", unitName]);
   if (res.code === 0) {
     return true;
@@ -617,7 +748,8 @@ export async function readSystemdServiceRuntime(
     };
   }
   const serviceName = resolveSystemdServiceName(env);
-  const unitName = `${serviceName}.service`;
+  const safeServiceName = sanitizeUnitName(serviceName);
+  const unitName = `${safeServiceName}.service`;
   const res = await execSystemctlUser(env, [
     "show",
     unitName,
@@ -665,7 +797,13 @@ export async function findLegacySystemdUnits(env: GatewayServiceEnv): Promise<Le
   const results: LegacySystemdUnit[] = [];
   const systemctlAvailable = await isSystemctlAvailable(env);
   for (const name of LEGACY_GATEWAY_SYSTEMD_SERVICE_NAMES) {
-    const unitPath = resolveSystemdUnitPathForName(env, name);
+    let safeName: string;
+    try {
+      safeName = sanitizeUnitName(name);
+    } catch {
+      continue;
+    }
+    const unitPath = resolveSystemdUnitPathForName(env, safeName);
     let exists = false;
     try {
       await fs.access(unitPath);
@@ -675,11 +813,11 @@ export async function findLegacySystemdUnits(env: GatewayServiceEnv): Promise<Le
     }
     let enabled = false;
     if (systemctlAvailable) {
-      const res = await execSystemctlUser(env, ["is-enabled", `${name}.service`]);
+      const res = await execSystemctlUser(env, ["is-enabled", `${safeName}.service`]);
       enabled = res.code === 0;
     }
     if (exists || enabled) {
-      results.push({ name, unitPath, enabled, exists });
+      results.push({ name: safeName, unitPath, enabled, exists });
     }
   }
   return results;
@@ -696,10 +834,17 @@ export async function uninstallLegacySystemdUnits({
 
   const systemctlAvailable = await isSystemctlAvailable(env);
   for (const unit of units) {
+    let safeName: string;
+    try {
+      safeName = sanitizeUnitName(unit.name);
+    } catch {
+      stdout.write(`Skipping unit with invalid name: ${unit.name}\n`);
+      continue;
+    }
     if (systemctlAvailable) {
-      await execSystemctlUser(env, ["disable", "--now", `${unit.name}.service`]);
+      await execSystemctlUser(env, ["disable", "--now", `${safeName}.service`]);
     } else {
-      stdout.write(`systemctl unavailable; removed legacy unit file only: ${unit.name}.service\n`);
+      stdout.write(`systemctl unavailable; removed legacy unit file only: ${safeName}.service\n`);
     }
 
     try {

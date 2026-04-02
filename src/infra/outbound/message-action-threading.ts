@@ -13,6 +13,36 @@ import type { ResolvedMessagingTarget } from "./target-resolver.js";
 
 type ResolveAutoThreadId = NonNullable<ChannelThreadingAdapter["resolveAutoThreadId"]>;
 
+const MAX_STRING_LENGTH = 2048;
+const SAFE_STRING_PATTERN = /^[\w\-.:@+/=\s]*$/;
+
+function sanitizeStringParam(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  if (trimmed.length > MAX_STRING_LENGTH) {
+    throw new Error(`Input parameter exceeds maximum allowed length of ${MAX_STRING_LENGTH}`);
+  }
+  if (!SAFE_STRING_PATTERN.test(trimmed)) {
+    throw new Error(`Input parameter contains disallowed characters`);
+  }
+  return trimmed;
+}
+
+function sanitizeActionParams(actionParams: Record<string, unknown>): void {
+  for (const key of Object.keys(actionParams)) {
+    const value = actionParams[key];
+    if (typeof value === "string") {
+      const sanitized = sanitizeStringParam(value);
+      if (sanitized === undefined) {
+        delete actionParams[key];
+      } else {
+        actionParams[key] = sanitized;
+      }
+    }
+  }
+}
+
 export function resolveAndApplyOutboundThreadId(
   actionParams: Record<string, unknown>,
   context: {
@@ -23,15 +53,30 @@ export function resolveAndApplyOutboundThreadId(
     resolveAutoThreadId?: ResolveAutoThreadId;
   },
 ): string | undefined {
+  sanitizeActionParams(actionParams);
+
+  const sanitizedTo = sanitizeStringParam(context.to);
+  if (!sanitizedTo) {
+    throw new Error("Invalid 'to' parameter: must be a non-empty string");
+  }
+
+  const sanitizedAccountId =
+    context.accountId != null ? sanitizeStringParam(context.accountId) : context.accountId;
+
   const threadId = readStringParam(actionParams, "threadId");
+  const sanitizedThreadId = sanitizeStringParam(threadId);
+
+  const replyTo = readStringParam(actionParams, "replyTo");
+  const sanitizedReplyTo = sanitizeStringParam(replyTo);
+
   const resolved =
-    threadId ??
+    sanitizedThreadId ??
     context.resolveAutoThreadId?.({
       cfg: context.cfg,
-      accountId: context.accountId,
-      to: context.to,
+      accountId: sanitizedAccountId,
+      to: sanitizedTo,
       toolContext: context.toolContext,
-      replyToId: readStringParam(actionParams, "replyTo"),
+      replyToId: sanitizedReplyTo,
     });
   if (resolved && !actionParams.threadId) {
     actionParams.threadId = resolved;
@@ -64,41 +109,52 @@ export async function prepareOutboundMirrorRoute(params: {
   resolvedThreadId?: string;
   outboundRoute: OutboundSessionRoute | null;
 }> {
-  const replyToId = readStringParam(params.actionParams, "replyTo");
+  sanitizeActionParams(params.actionParams);
+
+  const sanitizedTo = sanitizeStringParam(params.to);
+  if (!sanitizedTo) {
+    throw new Error("Invalid 'to' parameter: must be a non-empty string");
+  }
+
+  const sanitizedAgentId = params.agentId != null ? sanitizeStringParam(params.agentId) : params.agentId;
+  const sanitizedAccountId =
+    params.accountId != null ? sanitizeStringParam(params.accountId) : params.accountId;
+
+  const replyToId = sanitizeStringParam(readStringParam(params.actionParams, "replyTo"));
   const resolvedThreadId = resolveAndApplyOutboundThreadId(params.actionParams, {
     cfg: params.cfg,
-    to: params.to,
-    accountId: params.accountId,
+    to: sanitizedTo,
+    accountId: sanitizedAccountId,
     toolContext: params.toolContext,
     resolveAutoThreadId: params.resolveAutoThreadId,
   });
   const outboundRoute =
-    params.agentId && !params.dryRun
+    sanitizedAgentId && !params.dryRun
       ? await params.resolveOutboundSessionRoute({
           cfg: params.cfg,
           channel: params.channel,
-          agentId: params.agentId,
-          accountId: params.accountId,
-          target: params.to,
+          agentId: sanitizedAgentId,
+          accountId: sanitizedAccountId,
+          target: sanitizedTo,
           resolvedTarget: params.resolvedTarget,
           replyToId,
           threadId: resolvedThreadId,
         })
       : null;
-  if (outboundRoute && params.agentId && !params.dryRun) {
+  if (outboundRoute && sanitizedAgentId && !params.dryRun) {
     await params.ensureOutboundSessionEntry({
       cfg: params.cfg,
-      agentId: params.agentId,
+      agentId: sanitizedAgentId,
       channel: params.channel,
-      accountId: params.accountId,
+      accountId: sanitizedAccountId,
       route: outboundRoute,
     });
   }
   if (outboundRoute && !params.dryRun) {
     params.actionParams.__sessionKey = outboundRoute.sessionKey;
   }
-  if (params.agentId) {
-    params.actionParams.__agentId = params.agentId;
+  if (sanitizedAgentId) {
+    params.actionParams.__agentId = sanitizedAgentId;
   }
   return {
     resolvedThreadId,

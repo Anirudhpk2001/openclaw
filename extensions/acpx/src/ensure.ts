@@ -9,6 +9,43 @@ import {
 } from "./runtime-internals/process.js";
 
 const SEMVER_PATTERN = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\b/;
+const SAFE_VERSION_PATTERN = /^[0-9A-Za-z.\-+]+$/;
+const SAFE_COMMAND_PATTERN = /^[^\0\r\n;&|`$<>'"\\]+$/;
+
+function sanitizeVersion(version: string | undefined): string | undefined {
+  if (version === undefined) return undefined;
+  const trimmed = version.trim();
+  if (!trimmed) return undefined;
+  if (!SAFE_VERSION_PATTERN.test(trimmed)) {
+    throw new Error(`Invalid version string: ${trimmed}`);
+  }
+  if (trimmed.length > 128) {
+    throw new Error("Version string exceeds maximum allowed length");
+  }
+  return trimmed;
+}
+
+function sanitizeCommand(command: string): string {
+  const trimmed = command.trim();
+  if (!trimmed) {
+    throw new Error("Command must not be empty");
+  }
+  if (trimmed.length > 1024) {
+    throw new Error("Command string exceeds maximum allowed length");
+  }
+  if (!SAFE_COMMAND_PATTERN.test(trimmed)) {
+    throw new Error(`Command contains disallowed characters: ${trimmed}`);
+  }
+  return trimmed;
+}
+
+function sanitizeCwd(cwd: string): string {
+  const resolved = path.resolve(cwd);
+  if (resolved !== path.normalize(resolved)) {
+    throw new Error(`Invalid cwd path: ${cwd}`);
+  }
+  return resolved;
+}
 
 export type AcpxVersionCheckResult =
   | {
@@ -105,13 +142,15 @@ export async function checkAcpxVersion(params: {
   stripProviderAuthEnvVars?: boolean;
   spawnOptions?: SpawnCommandOptions;
 }): Promise<AcpxVersionCheckResult> {
-  const expectedVersion = params.expectedVersion?.trim() || undefined;
+  const sanitizedCommand = sanitizeCommand(params.command);
+  const expectedVersion = sanitizeVersion(params.expectedVersion);
   const installCommand = buildAcpxLocalInstallCommand(expectedVersion ?? ACPX_PINNED_VERSION);
-  const cwd = params.cwd ?? ACPX_PLUGIN_ROOT;
+  const rawCwd = params.cwd ?? ACPX_PLUGIN_ROOT;
+  const cwd = sanitizeCwd(rawCwd);
   const hasExpectedVersion = isExpectedVersionConfigured(expectedVersion);
   const probeArgs = hasExpectedVersion ? ["--version"] : ["--help"];
   const spawnParams = {
-    command: params.command,
+    command: sanitizedCommand,
     args: probeArgs,
     cwd,
     stripProviderAuthEnvVars: params.stripProviderAuthEnvVars,
@@ -137,7 +176,7 @@ export async function checkAcpxVersion(params: {
       return {
         ok: false,
         reason: "missing-command",
-        message: `acpx command not found at ${params.command}`,
+        message: `acpx command not found at ${sanitizedCommand}`,
         expectedVersion,
         installCommand,
       };
@@ -153,7 +192,7 @@ export async function checkAcpxVersion(params: {
 
   if ((result.code ?? 0) !== 0) {
     if (hasExpectedVersion && isUnsupportedVersionProbe(result.stdout, result.stderr)) {
-      const installedVersion = resolveVersionFromPackage(params.command, cwd);
+      const installedVersion = resolveVersionFromPackage(sanitizedCommand, cwd);
       if (installedVersion) {
         return resolveVersionCheckResult({ expectedVersion, installedVersion, installCommand });
       }
@@ -208,13 +247,15 @@ export async function ensureAcpx(params: {
   }
 
   pendingEnsure = (async () => {
-    const pluginRoot = params.pluginRoot ?? ACPX_PLUGIN_ROOT;
-    const expectedVersion = params.expectedVersion?.trim() || undefined;
+    const sanitizedCommand = sanitizeCommand(params.command);
+    const rawPluginRoot = params.pluginRoot ?? ACPX_PLUGIN_ROOT;
+    const pluginRoot = sanitizeCwd(rawPluginRoot);
+    const expectedVersion = sanitizeVersion(params.expectedVersion);
     const installVersion = expectedVersion ?? ACPX_PINNED_VERSION;
     const allowInstall = params.allowInstall ?? true;
 
     const precheck = await checkAcpxVersion({
-      command: params.command,
+      command: sanitizedCommand,
       cwd: pluginRoot,
       expectedVersion,
       stripProviderAuthEnvVars: params.stripProviderAuthEnvVars,
@@ -231,6 +272,8 @@ export async function ensureAcpx(params: {
       `acpx local binary unavailable or mismatched (${precheck.message}); running plugin-local install`,
     );
 
+    const sanitizedInstallVersion = sanitizeVersion(installVersion) ?? installVersion;
+
     const install = await spawnAndCollect({
       command: "npm",
       args: [
@@ -238,7 +281,7 @@ export async function ensureAcpx(params: {
         "--omit=dev",
         "--no-save",
         "--package-lock=false",
-        `acpx@${installVersion}`,
+        `acpx@${sanitizedInstallVersion}`,
       ],
       cwd: pluginRoot,
       stripProviderAuthEnvVars: params.stripProviderAuthEnvVars,
@@ -260,7 +303,7 @@ export async function ensureAcpx(params: {
     }
 
     const postcheck = await checkAcpxVersion({
-      command: params.command,
+      command: sanitizedCommand,
       cwd: pluginRoot,
       expectedVersion,
       stripProviderAuthEnvVars: params.stripProviderAuthEnvVars,

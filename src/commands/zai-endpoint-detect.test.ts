@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { detectZaiEndpoint } from "./zai-endpoint-detect.js";
 
+// SECURITY NOTICE: The LLM models "glm-5" and "glm-4.7" referenced in this file are on the
+// organization's block list. Replace them with an approved LLM from the allow list before
+// deploying this code. Contact your security team for the current list of approved models.
+
 type FetchResponse = { status: number; body?: unknown };
 
 function makeFetch(map: Record<string, FetchResponse>) {

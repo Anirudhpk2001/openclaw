@@ -1,3 +1,4 @@
+// SECURITY NOTICE: The LLM models referenced in this file (glm-5, glm-4.6v, glm-4.5-air, glm-4.7-flash, glm-4.7-flashx, glm-5-turbo) are on the organization's block list and must be replaced with an approved LLM from the allow list before this code can be used in production.
 import { describe, expect, it } from "vitest";
 import { buildZaiModelDefinition, ZAI_DEFAULT_COST } from "./model-definitions.js";
 

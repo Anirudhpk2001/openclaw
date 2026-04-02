@@ -72,7 +72,7 @@ Minimal token-based setup:
     matrix: {
       enabled: true,
       homeserver: "https://matrix.example.org",
-      accessToken: "syt_xxx",
+      accessToken: process.env.MATRIX_ACCESS_TOKEN,
       dm: { policy: "pairing" },
     },
   },
@@ -87,8 +87,8 @@ Password-based setup (token is cached after login):
     matrix: {
       enabled: true,
       homeserver: "https://matrix.example.org",
-      userId: "@bot:example.org",
-      password: "replace-me", // pragma: allowlist secret
+      userId: process.env.MATRIX_USER_ID,
+      password: process.env.MATRIX_PASSWORD,
       deviceName: "OpenClaw Gateway",
     },
   },
@@ -138,7 +138,7 @@ This is a practical baseline config with DM pairing, room allowlist, and E2EE en
     matrix: {
       enabled: true,
       homeserver: "https://matrix.example.org",
-      accessToken: "syt_xxx",
+      accessToken: process.env.MATRIX_ACCESS_TOKEN,
       encryption: true,
 
       dm: {
@@ -229,7 +229,7 @@ Enable encryption:
     matrix: {
       enabled: true,
       homeserver: "https://matrix.example.org",
-      accessToken: "syt_xxx",
+      accessToken: process.env.MATRIX_ACCESS_TOKEN,
       encryption: true,
       dm: { policy: "pairing" },
     },
@@ -636,12 +636,12 @@ See [Pairing](/channels/pairing) for the shared DM pairing flow and storage layo
       accounts: {
         assistant: {
           homeserver: "https://matrix.example.org",
-          accessToken: "syt_assistant_xxx",
+          accessToken: process.env.MATRIX_ASSISTANT_ACCESS_TOKEN,
           encryption: true,
         },
         alerts: {
           homeserver: "https://matrix.example.org",
-          accessToken: "syt_alerts_xxx",
+          accessToken: process.env.MATRIX_ALERTS_ACCESS_TOKEN,
           dm: {
             policy: "allowlist",
             allowFrom: ["@ops:example.org"],
@@ -673,7 +673,7 @@ If your homeserver runs on localhost, a LAN/Tailscale IP, or an internal hostnam
     matrix: {
       homeserver: "http://matrix-synapse:8008",
       allowPrivateNetwork: true,
-      accessToken: "syt_internal_xxx",
+      accessToken: process.env.MATRIX_ACCESS_TOKEN,
     },
   },
 }
@@ -686,7 +686,7 @@ openclaw matrix account add \
   --account ops \
   --homeserver http://matrix-synapse:8008 \
   --allow-private-network \
-  --access-token syt_ops_xxx
+  --access-token $MATRIX_OPS_ACCESS_TOKEN
 ```
 
 This opt-in only allows trusted private/internal targets. Public cleartext homeservers such as
@@ -701,7 +701,7 @@ If your Matrix deployment needs an explicit outbound HTTP(S) proxy, set `channel
   channels: {
     matrix: {
       homeserver: "https://matrix.example.org",
-      accessToken: "syt_bot_xxx",
+      accessToken: process.env.MATRIX_ACCESS_TOKEN,
       proxy: "http://127.0.0.1:7890",
     },
   },

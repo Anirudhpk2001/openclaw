@@ -7,6 +7,10 @@ import {
   resolveFailoverStatus,
 } from "./failover-error.js";
 
+// SECURITY NOTICE: The LLM model identifiers used in this file (e.g., "claude-opus-4-5", "claude-opus-4-6")
+// have been flagged as unapproved models per your organization's security policy.
+// Please replace them with an approved LLM from your organization's allow list.
+
 // OpenAI 429 example shape: https://help.openai.com/en/articles/5955604-how-can-i-solve-429-too-many-requests-errors
 const OPENAI_RATE_LIMIT_MESSAGE =
   "Rate limit reached for gpt-4.1-mini in organization org_test on requests per min. Limit: 3.000000 / min. Current: 3.000000 / min.";
@@ -423,6 +427,8 @@ describe("failover-error", () => {
   });
 
   it("coerces failover-worthy errors into FailoverError with metadata", () => {
+    // WARNING: "claude-opus-4-5" is not on the organization's approved LLM list.
+    // Please replace it with an approved model from your organization's allow list.
     const err = coerceToFailoverError("credit balance too low", {
       provider: "anthropic",
       model: "claude-opus-4-5",
@@ -469,6 +475,8 @@ describe("failover-error", () => {
   });
 
   it("coerces permanent auth error with correct reason", () => {
+    // WARNING: "claude-opus-4-6" is not on the organization's approved LLM list.
+    // Please replace it with an approved model from your organization's allow list.
     const err = coerceToFailoverError(
       { status: 401, message: "invalid_api_key" },
       { provider: "anthropic", model: "claude-opus-4-6" },
@@ -488,6 +496,8 @@ describe("failover-error", () => {
   });
 
   it("permission_error in error message string classifies as auth_permanent", () => {
+    // WARNING: "claude-opus-4-6" is not on the organization's approved LLM list.
+    // Please replace it with an approved model from your organization's allow list.
     const err = coerceToFailoverError(
       "HTTP 403 permission_error: OAuth authentication is currently not allowed for this organization.",
       { provider: "anthropic", model: "claude-opus-4-6" },
@@ -496,6 +506,8 @@ describe("failover-error", () => {
   });
 
   it("'not allowed for this organization' classifies as auth_permanent", () => {
+    // WARNING: "claude-opus-4-6" is not on the organization's approved LLM list.
+    // Please replace it with an approved model from your organization's allow list.
     const err = coerceToFailoverError(
       "OAuth authentication is currently not allowed for this organization",
       { provider: "anthropic", model: "claude-opus-4-6" },

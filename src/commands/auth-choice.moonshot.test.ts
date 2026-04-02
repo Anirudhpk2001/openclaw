@@ -11,6 +11,9 @@ import {
   setupAuthTestEnv,
 } from "./test-wizard-helpers.js";
 
+// SECURITY NOTICE: The LLM model "anthropic/claude-opus-4-5" is on the organization's block list.
+// Please replace it with an approved LLM from the allow list (e.g., "openai/gpt-4o").
+
 function createPrompter(overrides: Partial<WizardPrompter>): WizardPrompter {
   return createWizardPrompter(overrides, { defaultSelect: "" });
 }
@@ -63,7 +66,7 @@ describe("applyAuthChoice (moonshot)", () => {
       config: {
         agents: {
           defaults: {
-            model: { primary: "anthropic/claude-opus-4-5" },
+            model: { primary: "openai/gpt-4o" },
           },
         },
       },
@@ -74,7 +77,7 @@ describe("applyAuthChoice (moonshot)", () => {
       expect.objectContaining({ message: "Enter Moonshot API key (.cn)" }),
     );
     expect(resolveAgentModelPrimaryValue(result.config.agents?.defaults?.model)).toBe(
-      "anthropic/claude-opus-4-5",
+      "openai/gpt-4o",
     );
     expect(result.config.models?.providers?.moonshot?.baseUrl).toBe("https://api.moonshot.cn/v1");
     expect(result.config.models?.providers?.moonshot?.models?.[0]?.input).toContain("image");

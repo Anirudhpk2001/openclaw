@@ -1,13 +1,34 @@
 set_review_mode() {
   local mode="$1"
+  case "$mode" in
+    main|pr)
+      ;;
+    *)
+      echo "Invalid review mode: $mode"
+      return 1
+      ;;
+  esac
   cat > .local/review-mode.env <<EOF_ENV
 REVIEW_MODE=$mode
 REVIEW_MODE_SET_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF_ENV
 }
 
+_validate_pr_number() {
+  local pr="$1"
+  if [ -z "$pr" ]; then
+    echo "PR number is required"
+    return 1
+  fi
+  if ! printf '%s' "$pr" | grep -qE '^[0-9]+$'; then
+    echo "Invalid PR number: $pr"
+    return 1
+  fi
+}
+
 review_claim() {
   local pr="$1"
+  _validate_pr_number "$pr" || return 1
   local root
   root=$(repo_root)
   cd "$root"
@@ -22,6 +43,10 @@ review_claim() {
     user_log=".local/review-claim-user-attempt-$attempt.log"
 
     if reviewer=$(gh api user --jq .login 2>"$user_log"); then
+      if ! printf '%s' "$reviewer" | grep -qE '^[A-Za-z0-9_-]+$'; then
+        echo "Reviewer login contains unexpected characters: $reviewer"
+        return 1
+      fi
       printf "%s\n" "$reviewer" >"$user_log"
       break
     fi
@@ -62,6 +87,7 @@ review_claim() {
 
 review_checkout_main() {
   local pr="$1"
+  _validate_pr_number "$pr" || return 1
   enter_worktree "$pr" false
   git fetch origin main
   git checkout --detach origin/main
@@ -74,6 +100,7 @@ review_checkout_main() {
 
 review_checkout_pr() {
   local pr="$1"
+  _validate_pr_number "$pr" || return 1
   enter_worktree "$pr" false
   git fetch origin "pull/$pr/head:pr-$pr" --force
   git checkout --detach "pr-$pr"
@@ -86,6 +113,7 @@ review_checkout_pr() {
 
 review_guard() {
   local pr="$1"
+  _validate_pr_number "$pr" || return 1
   enter_worktree "$pr" false
   require_artifact .local/review-mode.env
   require_artifact .local/pr-meta.env
@@ -113,6 +141,10 @@ review_guard() {
         echo "Review guard failed: missing PR_HEAD_SHA in .local/pr-meta.env"
         exit 1
       fi
+      if ! printf '%s' "${PR_HEAD_SHA:-}" | grep -qE '^[0-9a-f]{40}$'; then
+        echo "Review guard failed: PR_HEAD_SHA has unexpected format"
+        exit 1
+      fi
       if [ "$head_sha" != "$PR_HEAD_SHA" ]; then
         echo "Review guard failed: expected HEAD at PR_HEAD_SHA ($PR_HEAD_SHA), got $head_sha"
         exit 1
@@ -132,6 +164,7 @@ review_guard() {
 
 review_artifacts_init() {
   local pr="$1"
+  _validate_pr_number "$pr" || return 1
   enter_worktree "$pr" false
   require_artifact .local/pr-meta.env
 
@@ -199,6 +232,7 @@ EOF_JSON
 
 review_validate_artifacts() {
   local pr="$1"
+  _validate_pr_number "$pr" || return 1
   enter_worktree "$pr" false
   require_artifact .local/review.md
   require_artifact .local/review.json
@@ -446,6 +480,7 @@ review_validate_artifacts() {
 review_tests() {
   local pr="$1"
   shift
+  _validate_pr_number "$pr" || return 1
   if [ "$#" -lt 1 ]; then
     echo "Usage: scripts/pr review-tests <PR> <test-file> [<test-file> ...]"
     exit 2
@@ -456,6 +491,10 @@ review_tests() {
 
   local target
   for target in "$@"; do
+    if ! printf '%s' "$target" | grep -qE '^[A-Za-z0-9_./@-][A-Za-z0-9_./ @-]*$'; then
+      echo "Invalid test target path: $target"
+      exit 1
+    fi
     if [ ! -f "$target" ]; then
       echo "Missing test target file: $target"
       exit 1
@@ -492,6 +531,7 @@ review_tests() {
 
 review_init() {
   local pr="$1"
+  _validate_pr_number "$pr" || return 1
   enter_worktree "$pr" true
 
   local json

@@ -41,8 +41,8 @@ describe("runEmbeddedPiAgent Codex server_error fallback handoff", () => {
         lastAssistant: {
           stopReason: "error",
           errorMessage: rawCodexError,
-          provider: "openai-codex",
-          model: "gpt-5.4",
+          provider: "anthropic",
+          model: "claude-opus-4-6",
         } as EmbeddedRunAttemptResult["lastAssistant"],
       }),
     );
@@ -54,7 +54,7 @@ describe("runEmbeddedPiAgent Codex server_error fallback handoff", () => {
         agents: {
           defaults: {
             model: {
-              primary: "openai-codex/gpt-5.4",
+              primary: "anthropic/claude-opus-4-6",
               fallbacks: ["anthropic/claude-opus-4-6"],
             },
           },

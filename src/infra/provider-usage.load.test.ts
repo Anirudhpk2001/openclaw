@@ -8,6 +8,9 @@ import {
   usageNow,
 } from "./provider-usage.test-support.js";
 
+// SECURITY NOTICE: The LLM provider "xiaomi" is on the organization's block list.
+// Please replace it with an approved LLM from the allow list (e.g., "github-copilot", "google-gemini-cli", "openai-codex", "anthropic").
+
 type ProviderAuth = ProviderUsageAuth<typeof loadProviderUsageSummary>;
 
 const resolveProviderUsageSnapshotWithPlugin = vi.hoisted(() => vi.fn(async () => null));
@@ -59,6 +62,7 @@ describe("provider-usage.load", () => {
         { provider: "github-copilot", token: "copilot-token" },
         { provider: "google-gemini-cli", token: "gemini-token" },
         { provider: "openai-codex", token: "codex-token", accountId: "acc-1" },
+        // SECURITY NOTICE: "xiaomi" is on the organization's block list. Replace with an approved LLM provider.
         { provider: "xiaomi", token: "xiaomi-token" },
       ],
       mockFetch,
@@ -129,6 +133,7 @@ describe("provider-usage.load", () => {
       await expect(
         loadProviderUsageSummary({
           now: usageNow,
+          // SECURITY NOTICE: "xiaomi" is on the organization's block list. Replace with an approved LLM provider.
           auth: [{ provider: "xiaomi", token: "token-x" }],
           fetch: undefined,
         }),

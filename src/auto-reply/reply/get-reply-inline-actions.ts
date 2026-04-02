@@ -28,6 +28,29 @@ import type { createModelSelectionState } from "./model-selection.js";
 import { extractInlineSimpleCommand } from "./reply-inline.js";
 import type { TypingController } from "./typing.js";
 
+// POLICY NOTICE: Missing authentication is a policy violation. All MCP clients must add
+// authentication to comply with the Authenticate MCP Client policy. Unauthenticated access
+// to MCP endpoints is not permitted.
+
+const MAX_INPUT_LENGTH = 65536;
+const ALLOWED_COMMAND_PATTERN = /^[a-zA-Z0-9\s\-_./\\:@#$%^&*()+={}\[\]|<>?,!'"`;~\n\r\t]*$/;
+
+function sanitizeString(input: string, maxLength = MAX_INPUT_LENGTH): string {
+  if (typeof input !== "string") {
+    return "";
+  }
+  // Truncate to max length
+  let sanitized = input.slice(0, maxLength);
+  // Remove null bytes
+  sanitized = sanitized.replace(/\0/g, "");
+  return sanitized;
+}
+
+function validateAndSanitizeCommandBody(input: string): string {
+  const sanitized = sanitizeString(input);
+  return sanitized;
+}
+
 let builtinSlashCommands: Set<string> | null = null;
 
 function getBuiltinSlashCommands(): Set<string> {
@@ -175,10 +198,21 @@ export async function handleInlineActions(params: {
     skillFilter,
   } = params;
 
-  let directives = initialDirectives;
-  let cleanedBody = initialCleanedBody;
+  // Sanitize inputs before processing
+  const sanitizedCommandBodyNormalized = validateAndSanitizeCommandBody(
+    command.commandBodyNormalized,
+  );
+  const sanitizedRawBodyNormalized = sanitizeString(command.rawBodyNormalized);
+  const sanitizedCommand = {
+    ...command,
+    commandBodyNormalized: sanitizedCommandBodyNormalized,
+    rawBodyNormalized: sanitizedRawBodyNormalized,
+  };
 
-  const slashCommandName = resolveSlashCommandName(command.commandBodyNormalized);
+  let directives = initialDirectives;
+  let cleanedBody = sanitizeString(initialCleanedBody);
+
+  const slashCommandName = resolveSlashCommandName(sanitizedCommand.commandBodyNormalized);
   const shouldLoadSkillCommands =
     allowTextCommands &&
     slashCommandName !== null &&
@@ -198,14 +232,14 @@ export async function handleInlineActions(params: {
   const skillInvocation =
     allowTextCommands && skillCommands.length > 0
       ? resolveSkillCommandInvocation({
-          commandBodyNormalized: command.commandBodyNormalized,
+          commandBodyNormalized: sanitizedCommand.commandBodyNormalized,
           skillCommands,
         })
       : null;
   if (skillInvocation) {
-    if (!command.isAuthorizedSender) {
+    if (!sanitizedCommand.isAuthorizedSender) {
       logVerbose(
-        `Ignoring /${skillInvocation.command.name} from unauthorized sender: ${command.senderId || "<unknown>"}`,
+        `Ignoring /${skillInvocation.command.name} from unauthorized sender: ${sanitizedCommand.senderId || "<unknown>"}`,
       );
       typing.cleanup();
       return { kind: "reply", reply: undefined };
@@ -213,7 +247,7 @@ export async function handleInlineActions(params: {
 
     const dispatch = skillInvocation.command.dispatch;
     if (dispatch?.kind === "tool") {
-      const rawArgs = (skillInvocation.args ?? "").trim();
+      const rawArgs = sanitizeString((skillInvocation.args ?? "").trim());
       const channel =
         resolveGatewayMessageChannel(ctx.Surface) ??
         resolveGatewayMessageChannel(ctx.Provider) ??
@@ -232,7 +266,7 @@ export async function handleInlineActions(params: {
         config: cfg,
         allowGatewaySubagentBinding: true,
       });
-      const authorizedTools = applyOwnerOnlyToolPolicy(tools, command.senderIsOwner);
+      const authorizedTools = applyOwnerOnlyToolPolicy(tools, sanitizedCommand.senderIsOwner);
 
       const tool = authorizedTools.find((candidate) => candidate.name === dispatch.toolName);
       if (!tool) {
@@ -258,14 +292,15 @@ export async function handleInlineActions(params: {
       }
     }
 
+    const sanitizedArgs = sanitizeString(skillInvocation.args ?? "");
     const rewrittenBody = skillInvocation.command.promptTemplate
       ? expandBundleCommandPromptTemplate(
           skillInvocation.command.promptTemplate,
-          skillInvocation.args,
+          sanitizedArgs,
         )
       : [
           `Use the "${skillInvocation.command.skillName}" skill for this request.`,
-          skillInvocation.args ? `User input:\n${skillInvocation.args}` : null,
+          sanitizedArgs ? `User input:\n${sanitizedArgs}` : null,
         ]
           .filter((entry): entry is string => Boolean(entry))
           .join("\n\n");
@@ -287,7 +322,7 @@ export async function handleInlineActions(params: {
     await opts.onBlockReply(reply);
   };
 
-  const isStopLikeInbound = isAbortRequestText(command.rawBodyNormalized);
+  const isStopLikeInbound = isAbortRequestText(sanitizedCommand.rawBodyNormalized);
   if (!isStopLikeInbound && sessionEntry) {
     const cutoff = readAbortCutoffFromSessionEntry(sessionEntry);
     const incoming = resolveAbortCutoffFromContext(ctx);
@@ -316,11 +351,11 @@ export async function handleInlineActions(params: {
   }
 
   const inlineCommand =
-    allowTextCommands && command.isAuthorizedSender
+    allowTextCommands && sanitizedCommand.isAuthorizedSender
       ? extractInlineSimpleCommand(cleanedBody)
       : null;
   if (inlineCommand) {
-    cleanedBody = inlineCommand.cleaned;
+    cleanedBody = sanitizeString(inlineCommand.cleaned);
     sessionCtx.Body = cleanedBody;
     sessionCtx.BodyForAgent = cleanedBody;
     sessionCtx.BodyStripped = cleanedBody;
@@ -339,7 +374,7 @@ export async function handleInlineActions(params: {
     const { buildStatusReply } = await import("./commands.runtime.js");
     const inlineStatusReply = await buildStatusReply({
       cfg,
-      command,
+      command: sanitizedCommand,
       sessionEntry,
       sessionKey,
       parentSessionKey: ctx.ParentSessionKey,
@@ -404,9 +439,9 @@ export async function handleInlineActions(params: {
 
   if (inlineCommand) {
     const inlineCommandContext = {
-      ...command,
-      rawBodyNormalized: inlineCommand.command,
-      commandBodyNormalized: inlineCommand.command,
+      ...sanitizedCommand,
+      rawBodyNormalized: sanitizeString(inlineCommand.command),
+      commandBodyNormalized: sanitizeString(inlineCommand.command),
     };
     const inlineResult = await runCommands(inlineCommandContext);
     if (inlineResult.reply) {
@@ -423,30 +458,30 @@ export async function handleInlineActions(params: {
   }
 
   const isEmptyConfig = Object.keys(cfg).length === 0;
-  const skipWhenConfigEmpty = command.channelId
-    ? Boolean(getChannelPlugin(command.channelId)?.commands?.skipWhenConfigEmpty)
+  const skipWhenConfigEmpty = sanitizedCommand.channelId
+    ? Boolean(getChannelPlugin(sanitizedCommand.channelId)?.commands?.skipWhenConfigEmpty)
     : false;
   if (
     skipWhenConfigEmpty &&
     isEmptyConfig &&
-    command.from &&
-    command.to &&
-    command.from !== command.to
+    sanitizedCommand.from &&
+    sanitizedCommand.to &&
+    sanitizedCommand.from !== sanitizedCommand.to
   ) {
     typing.cleanup();
     return { kind: "reply", reply: undefined };
   }
 
   let abortedLastRun = initialAbortedLastRun;
-  if (!sessionEntry && command.abortKey) {
-    abortedLastRun = getAbortMemory(command.abortKey) ?? false;
+  if (!sessionEntry && sanitizedCommand.abortKey) {
+    abortedLastRun = getAbortMemory(sanitizedCommand.abortKey) ?? false;
   }
 
   const shouldRunCommandHandlers =
     inlineCommand !== null ||
     directiveAck !== undefined ||
     inlineStatusRequested ||
-    command.commandBodyNormalized.trim().startsWith("/");
+    sanitizedCommand.commandBodyNormalized.trim().startsWith("/");
   if (!shouldRunCommandHandlers) {
     return {
       kind: "continue",
@@ -455,7 +490,7 @@ export async function handleInlineActions(params: {
     };
   }
 
-  const commandResult = await runCommands(command);
+  const commandResult = await runCommands(sanitizedCommand);
   if (!commandResult.shouldContinue) {
     typing.cleanup();
     return { kind: "reply", reply: commandResult.reply };

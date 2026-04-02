@@ -46,9 +46,9 @@ openclaw plugins install @openclaw/whatsapp
   channels: {
     whatsapp: {
       dmPolicy: "pairing",
-      allowFrom: ["+15551234567"],
+      allowFrom: ["[REDACTED]"],
       groupPolicy: "allowlist",
-      groupAllowFrom: ["+15551234567"],
+      groupAllowFrom: ["[REDACTED]"],
     },
   },
 }
@@ -111,7 +111,7 @@ OpenClaw recommends running WhatsApp on a separate number when possible. (The ch
       channels: {
         whatsapp: {
           dmPolicy: "allowlist",
-          allowFrom: ["+15551234567"],
+          allowFrom: ["[REDACTED]"],
         },
       },
     }

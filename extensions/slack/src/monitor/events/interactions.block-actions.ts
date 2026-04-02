@@ -98,6 +98,94 @@ type ParsedSlackBlockAction = {
   actionSummary: SlackActionSummary;
 };
 
+const MAX_ACTION_ID_LENGTH = 255;
+const MAX_BLOCK_ID_LENGTH = 255;
+const MAX_USER_ID_LENGTH = 128;
+const MAX_CHANNEL_ID_LENGTH = 128;
+const MAX_TEAM_ID_LENGTH = 128;
+const MAX_TS_LENGTH = 64;
+const MAX_TRIGGER_ID_LENGTH = 512;
+const MAX_RESPONSE_URL_LENGTH = 2048;
+const MAX_INPUT_VALUE_LENGTH = 3000;
+const MAX_SELECTED_VALUES_COUNT = 100;
+const MAX_SELECTED_VALUE_LENGTH = 1024;
+const MAX_DATE_LENGTH = 32;
+const MAX_TIME_LENGTH = 32;
+const SAFE_ID_PATTERN = /^[a-zA-Z0-9_\-:.@#|]+$/;
+const SAFE_TS_PATTERN = /^\d+\.\d+$/;
+const SAFE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const SAFE_TIME_PATTERN = /^\d{2}:\d{2}$/;
+
+function sanitizeString(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed;
+}
+
+function sanitizeId(value: unknown, maxLength: number): string | undefined {
+  const str = sanitizeString(value, maxLength);
+  if (!str) {
+    return undefined;
+  }
+  return SAFE_ID_PATTERN.test(str) ? str : undefined;
+}
+
+function sanitizeTs(value: unknown): string | undefined {
+  const str = sanitizeString(value, MAX_TS_LENGTH);
+  if (!str) {
+    return undefined;
+  }
+  return SAFE_TS_PATTERN.test(str) ? str : undefined;
+}
+
+function sanitizeDate(value: unknown): string | undefined {
+  const str = sanitizeString(value, MAX_DATE_LENGTH);
+  if (!str) {
+    return undefined;
+  }
+  return SAFE_DATE_PATTERN.test(str) ? str : undefined;
+}
+
+function sanitizeTime(value: unknown): string | undefined {
+  const str = sanitizeString(value, MAX_TIME_LENGTH);
+  if (!str) {
+    return undefined;
+  }
+  return SAFE_TIME_PATTERN.test(str) ? str : undefined;
+}
+
+function sanitizeUrl(value: unknown, maxLength: number): string | undefined {
+  const str = sanitizeString(value, maxLength);
+  if (!str) {
+    return undefined;
+  }
+  try {
+    const parsed = new URL(str);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return undefined;
+    }
+    return parsed.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function sanitizeSelectedValues(values: unknown): string[] | undefined {
+  if (!Array.isArray(values)) {
+    return undefined;
+  }
+  const sanitized = values
+    .slice(0, MAX_SELECTED_VALUES_COUNT)
+    .map((v) => sanitizeString(v, MAX_SELECTED_VALUE_LENGTH))
+    .filter((v): v is string => v !== undefined);
+  return sanitized.length > 0 ? sanitized : undefined;
+}
+
 function readOptionValues(options: unknown): string[] | undefined {
   if (!Array.isArray(options)) {
     return undefined;
@@ -194,43 +282,52 @@ export function summarizeAction(action: Record<string, unknown>): SlackActionSum
       workflow_id?: string;
     };
   };
-  const actionType = typed.type;
+  const actionType = sanitizeString(typed.type, 64);
+  const rawInputValue = typeof typed.value === "string" ? typed.value : undefined;
+  const inputValue = rawInputValue != null ? sanitizeString(rawInputValue, MAX_INPUT_VALUE_LENGTH) : undefined;
+
   const selectedUsers = uniqueNonEmptyStrings([
     ...(typed.selected_user ? [typed.selected_user] : []),
     ...(Array.isArray(typed.selected_users) ? typed.selected_users : []),
-  ]);
+  ]).map((v) => sanitizeId(v, MAX_USER_ID_LENGTH) ?? "").filter(Boolean);
+
   const selectedChannels = uniqueNonEmptyStrings([
     ...(typed.selected_channel ? [typed.selected_channel] : []),
     ...(Array.isArray(typed.selected_channels) ? typed.selected_channels : []),
-  ]);
+  ]).map((v) => sanitizeId(v, MAX_CHANNEL_ID_LENGTH) ?? "").filter(Boolean);
+
   const selectedConversations = uniqueNonEmptyStrings([
     ...(typed.selected_conversation ? [typed.selected_conversation] : []),
     ...(Array.isArray(typed.selected_conversations) ? typed.selected_conversations : []),
-  ]);
+  ]).map((v) => sanitizeId(v, MAX_CHANNEL_ID_LENGTH) ?? "").filter(Boolean);
+
+  const rawSelectedOptionValue = typed.selected_option?.value
+    ? sanitizeString(typed.selected_option.value, MAX_SELECTED_VALUE_LENGTH)
+    : undefined;
+  const rawSelectedOptionLabel = typed.selected_option?.text?.text
+    ? sanitizeString(typed.selected_option.text.text, MAX_SELECTED_VALUE_LENGTH)
+    : undefined;
+
   const selectedValues = uniqueNonEmptyStrings([
-    ...(typed.selected_option?.value ? [typed.selected_option.value] : []),
-    ...(readOptionValues(typed.selected_options) ?? []),
+    ...(rawSelectedOptionValue ? [rawSelectedOptionValue] : []),
+    ...(sanitizeSelectedValues(readOptionValues(typed.selected_options)) ?? []),
     ...selectedUsers,
     ...selectedChannels,
     ...selectedConversations,
   ]);
   const selectedLabels = uniqueNonEmptyStrings([
-    ...(typed.selected_option?.text?.text ? [typed.selected_option.text.text] : []),
-    ...(readOptionLabels(typed.selected_options) ?? []),
+    ...(rawSelectedOptionLabel ? [rawSelectedOptionLabel] : []),
+    ...(sanitizeSelectedValues(readOptionLabels(typed.selected_options)) ?? []),
   ]);
-  const inputValue = typeof typed.value === "string" ? typed.value : undefined;
+
   const inputNumber =
     actionType === "number_input" && inputValue != null ? Number.parseFloat(inputValue) : undefined;
   const parsedNumber = Number.isFinite(inputNumber) ? inputNumber : undefined;
   const inputEmail =
-    actionType === "email_text_input" && inputValue?.includes("@") ? inputValue : undefined;
+    actionType === "email_text_input" && inputValue?.includes("@") ? sanitizeString(inputValue, MAX_INPUT_VALUE_LENGTH) : undefined;
   let inputUrl: string | undefined;
   if (actionType === "url_text_input" && inputValue) {
-    try {
-      inputUrl = new URL(inputValue).toString();
-    } catch {
-      inputUrl = undefined;
-    }
+    inputUrl = sanitizeUrl(inputValue, MAX_RESPONSE_URL_LENGTH);
   }
   const richTextValue = actionType === "rich_text_input" ? typed.rich_text_value : undefined;
   const richTextPreview = summarizeRichTextPreview(richTextValue);
@@ -247,27 +344,35 @@ export function summarizeAction(action: Record<string, unknown>): SlackActionSum
               ? "text"
               : undefined;
 
+  const workflowTriggerUrl = sanitizeUrl(typed.workflow?.trigger_url, MAX_RESPONSE_URL_LENGTH);
+  const workflowId = sanitizeId(typed.workflow?.workflow_id, MAX_ACTION_ID_LENGTH);
+  const selectedDate = sanitizeDate(typed.selected_date);
+  const selectedTime = sanitizeTime(typed.selected_time);
+  const selectedDateTime =
+    typeof typed.selected_date_time === "number" && Number.isFinite(typed.selected_date_time)
+      ? typed.selected_date_time
+      : undefined;
+
   return {
     actionType,
     inputKind,
-    value: typed.value,
+    value: inputValue,
     selectedValues: selectedValues.length > 0 ? selectedValues : undefined,
     selectedUsers: selectedUsers.length > 0 ? selectedUsers : undefined,
     selectedChannels: selectedChannels.length > 0 ? selectedChannels : undefined,
     selectedConversations: selectedConversations.length > 0 ? selectedConversations : undefined,
     selectedLabels: selectedLabels.length > 0 ? selectedLabels : undefined,
-    selectedDate: typed.selected_date,
-    selectedTime: typed.selected_time,
-    selectedDateTime:
-      typeof typed.selected_date_time === "number" ? typed.selected_date_time : undefined,
+    selectedDate,
+    selectedTime,
+    selectedDateTime,
     inputValue,
     inputNumber: parsedNumber,
     inputEmail,
     inputUrl,
     richTextValue,
     richTextPreview,
-    workflowTriggerUrl: typed.workflow?.trigger_url,
-    workflowId: typed.workflow?.workflow_id,
+    workflowTriggerUrl,
+    workflowId,
   };
 }
 
@@ -405,17 +510,35 @@ function parseSlackBlockAction(params: {
     type?: string;
     text?: { text?: string };
   };
+
+  const rawActionId = typeof typedActionWithText.action_id === "string" ? typedActionWithText.action_id : "unknown";
+  const sanitizedActionId = rawActionId === "unknown" ? "unknown" : (sanitizeString(rawActionId, MAX_ACTION_ID_LENGTH) ?? "unknown");
+
+  const rawBlockId = typedActionWithText.block_id;
+  const sanitizedBlockId = rawBlockId != null ? sanitizeString(rawBlockId, MAX_BLOCK_ID_LENGTH) : undefined;
+
+  const rawUserId = typedBody.user?.id ?? "unknown";
+  const sanitizedUserId = rawUserId === "unknown" ? "unknown" : (sanitizeId(rawUserId, MAX_USER_ID_LENGTH) ?? "unknown");
+
+  const rawChannelId = typedBody.channel?.id ?? typedBody.container?.channel_id;
+  const sanitizedChannelId = rawChannelId != null ? sanitizeId(rawChannelId, MAX_CHANNEL_ID_LENGTH) : undefined;
+
+  const rawMessageTs = typedBody.message?.ts ?? typedBody.container?.message_ts;
+  const sanitizedMessageTs = rawMessageTs != null ? sanitizeTs(rawMessageTs) : undefined;
+
+  const rawThreadTs = typedBody.container?.thread_ts;
+  const sanitizedThreadTs = rawThreadTs != null ? sanitizeTs(rawThreadTs) : undefined;
+
   return {
     typedBody,
     typedAction,
     typedActionWithText,
-    actionId:
-      typeof typedActionWithText.action_id === "string" ? typedActionWithText.action_id : "unknown",
-    blockId: typedActionWithText.block_id,
-    userId: typedBody.user?.id ?? "unknown",
-    channelId: typedBody.channel?.id ?? typedBody.container?.channel_id,
-    messageTs: typedBody.message?.ts ?? typedBody.container?.message_ts,
-    threadTs: typedBody.container?.thread_ts,
+    actionId: sanitizedActionId,
+    blockId: sanitizedBlockId,
+    userId: sanitizedUserId,
+    channelId: sanitizedChannelId,
+    messageTs: sanitizedMessageTs,
+    threadTs: sanitizedThreadTs,
     actionSummary: summarizeAction(typedAction),
   };
 }
@@ -602,15 +725,22 @@ function enqueueSlackBlockActionEvent(params: {
   auth: { channelType?: "im" | "mpim" | "channel" | "group" };
   formatSystemEvent: (payload: Record<string, unknown>) => string;
 }): void {
+  const rawTeamId = params.parsed.typedBody.team?.id;
+  const sanitizedTeamId = rawTeamId != null ? sanitizeId(rawTeamId, MAX_TEAM_ID_LENGTH) : undefined;
+  const rawTriggerId = params.parsed.typedBody.trigger_id;
+  const sanitizedTriggerId = rawTriggerId != null ? sanitizeString(rawTriggerId, MAX_TRIGGER_ID_LENGTH) : undefined;
+  const rawResponseUrl = params.parsed.typedBody.response_url;
+  const sanitizedResponseUrl = rawResponseUrl != null ? sanitizeUrl(rawResponseUrl, MAX_RESPONSE_URL_LENGTH) : undefined;
+
   const eventPayload: InteractionSummary = {
     interactionType: "block_action",
     actionId: params.parsed.actionId,
     blockId: params.parsed.blockId,
     ...params.parsed.actionSummary,
     userId: params.parsed.userId,
-    teamId: params.parsed.typedBody.team?.id,
-    triggerId: params.parsed.typedBody.trigger_id,
-    responseUrl: params.parsed.typedBody.response_url,
+    teamId: sanitizedTeamId,
+    triggerId: sanitizedTriggerId,
+    responseUrl: sanitizedResponseUrl,
     channelId: params.parsed.channelId,
     messageTs: params.parsed.messageTs,
     threadTs: params.parsed.threadTs,

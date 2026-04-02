@@ -29,6 +29,69 @@ export type GatewayInstallPlan = {
   environment: Record<string, string | undefined>;
 };
 
+const MAX_ENV_VAR_KEY_LENGTH = 256;
+const MAX_ENV_VAR_VALUE_LENGTH = 32768;
+const SAFE_ENV_VAR_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function sanitizeEnvVarKey(key: string): string | undefined {
+  if (!key || typeof key !== "string") {
+    return undefined;
+  }
+  const trimmed = key.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_ENV_VAR_KEY_LENGTH) {
+    return undefined;
+  }
+  if (!SAFE_ENV_VAR_KEY_PATTERN.test(trimmed)) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+function sanitizeEnvVarValue(value: string): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length > MAX_ENV_VAR_VALUE_LENGTH) {
+    return undefined;
+  }
+  // Remove null bytes and other control characters that could be used for injection
+  const sanitized = trimmed.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+  return sanitized;
+}
+
+function sanitizePort(port: number): number {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new RangeError(`Invalid port number: ${port}`);
+  }
+  return port;
+}
+
+function sanitizeEnvRecord(
+  env: Record<string, string | undefined>,
+  warn?: DaemonInstallWarnFn,
+): Record<string, string | undefined> {
+  const sanitized: Record<string, string | undefined> = {};
+  for (const [rawKey, rawValue] of Object.entries(env)) {
+    const key = sanitizeEnvVarKey(rawKey);
+    if (!key) {
+      warn?.(`Env var key "${rawKey}" failed sanitization and was dropped`, "Input sanitization");
+      continue;
+    }
+    if (rawValue === undefined) {
+      sanitized[key] = undefined;
+      continue;
+    }
+    const value = sanitizeEnvVarValue(rawValue);
+    if (value === undefined) {
+      warn?.(`Env var value for "${key}" failed sanitization and was dropped`, "Input sanitization");
+      continue;
+    }
+    sanitized[key] = value;
+  }
+  return sanitized;
+}
+
 function collectAuthProfileServiceEnvVars(params: {
   env: Record<string, string | undefined>;
   authStore?: AuthProfileStore;
@@ -47,8 +110,16 @@ function collectAuthProfileServiceEnvVars(params: {
     if (!ref || ref.source !== "env") {
       continue;
     }
-    const key = normalizeEnvVarKey(ref.id, { portable: true });
+    const rawKey = normalizeEnvVarKey(ref.id, { portable: true });
+    if (!rawKey) {
+      continue;
+    }
+    const key = sanitizeEnvVarKey(rawKey);
     if (!key) {
+      params.warn?.(
+        `Auth profile env ref "${rawKey}" failed key sanitization and was dropped`,
+        "Auth profile",
+      );
       continue;
     }
     if (isDangerousHostEnvVarName(key) || isDangerousHostEnvOverrideVarName(key)) {
@@ -58,8 +129,16 @@ function collectAuthProfileServiceEnvVars(params: {
       );
       continue;
     }
-    const value = params.env[key]?.trim();
+    const rawValue = params.env[key]?.trim();
+    if (!rawValue) {
+      continue;
+    }
+    const value = sanitizeEnvVarValue(rawValue);
     if (!value) {
+      params.warn?.(
+        `Auth profile env value for "${key}" failed sanitization and was dropped`,
+        "Auth profile",
+      );
       continue;
     }
     entries[key] = value;
@@ -75,13 +154,14 @@ function buildGatewayInstallEnvironment(params: {
   warn?: DaemonInstallWarnFn;
   serviceEnvironment: Record<string, string | undefined>;
 }): Record<string, string | undefined> {
+  const sanitizedEnv = sanitizeEnvRecord(params.env, params.warn);
   const environment: Record<string, string | undefined> = {
     ...collectDurableServiceEnvVars({
-      env: params.env,
+      env: sanitizedEnv,
       config: params.config,
     }),
     ...collectAuthProfileServiceEnvVars({
-      env: params.env,
+      env: sanitizedEnv,
       authStore: params.authStore,
       warn: params.warn,
     }),
@@ -101,31 +181,34 @@ export async function buildGatewayInstallPlan(params: {
   config?: OpenClawConfig;
   authStore?: AuthProfileStore;
 }): Promise<GatewayInstallPlan> {
+  const validatedPort = sanitizePort(params.port);
+  const sanitizedEnv = sanitizeEnvRecord(params.env, params.warn);
+
   const { devMode, nodePath } = await resolveDaemonInstallRuntimeInputs({
-    env: params.env,
+    env: sanitizedEnv,
     runtime: params.runtime,
     devMode: params.devMode,
     nodePath: params.nodePath,
   });
   const { programArguments, workingDirectory } = await resolveGatewayProgramArguments({
-    port: params.port,
+    port: validatedPort,
     dev: devMode,
     runtime: params.runtime,
     nodePath,
   });
   await emitDaemonInstallRuntimeWarning({
-    env: params.env,
+    env: sanitizedEnv,
     runtime: params.runtime,
     programArguments,
     warn: params.warn,
     title: "Gateway runtime",
   });
   const serviceEnvironment = buildServiceEnvironment({
-    env: params.env,
-    port: params.port,
+    env: sanitizedEnv,
+    port: validatedPort,
     launchdLabel:
       process.platform === "darwin"
-        ? resolveGatewayLaunchAgentLabel(params.env.OPENCLAW_PROFILE)
+        ? resolveGatewayLaunchAgentLabel(sanitizedEnv.OPENCLAW_PROFILE)
         : undefined,
     // Keep npm/pnpm available to the service when the selected daemon node comes from
     // a version-manager bin directory that isn't covered by static PATH guesses.
@@ -141,7 +224,7 @@ export async function buildGatewayInstallPlan(params: {
     programArguments,
     workingDirectory,
     environment: buildGatewayInstallEnvironment({
-      env: params.env,
+      env: sanitizedEnv,
       config: params.config,
       authStore: params.authStore,
       warn: params.warn,

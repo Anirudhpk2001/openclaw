@@ -42,7 +42,10 @@ const { discordThreadBindingTesting } = loadBundledPluginTestApiSync<{
 }>("discord");
 
 function buildBundledPluginModuleId(pluginId: string, artifactBasename: string): string {
-  return ["..", "..", "..", "..", "extensions", pluginId, artifactBasename].join("/");
+  // Sanitize inputs to prevent path traversal
+  const sanitizedPluginId = pluginId.replace(/[^a-zA-Z0-9_-]/g, "");
+  const sanitizedArtifactBasename = artifactBasename.replace(/[^a-zA-Z0-9_.\-]/g, "");
+  return ["..", "..", "..", "..", "extensions", sanitizedPluginId, sanitizedArtifactBasename].join("/");
 }
 
 type PluginContractEntry = {
@@ -219,9 +222,9 @@ const matrixSessionBindingStateDir = fs.mkdtempSync(
 );
 const matrixSessionBindingAuth = {
   accountId: "ops",
-  homeserver: "https://matrix.example.org",
-  userId: "@bot:example.org",
-  accessToken: "token",
+  homeserver: process.env.MATRIX_HOMESERVER ?? "https://matrix.example.org",
+  userId: process.env.MATRIX_USER_ID ?? "@bot:example.org",
+  accessToken: process.env.MATRIX_ACCESS_TOKEN ?? "token",
 } as const;
 
 function resetMatrixSessionBindingStateDir() {
@@ -264,8 +267,8 @@ export const actionContractRegistry: ActionsContractEntry[] = [
         cfg: {
           channels: {
             slack: {
-              botToken: "xoxb-test",
-              appToken: "xapp-test",
+              botToken: process.env.SLACK_BOT_TOKEN ?? "xoxb-test",
+              appToken: process.env.SLACK_APP_TOKEN ?? "xapp-test",
             },
           },
         } as OpenClawConfig,
@@ -291,8 +294,8 @@ export const actionContractRegistry: ActionsContractEntry[] = [
         cfg: {
           channels: {
             slack: {
-              botToken: "xoxb-test",
-              appToken: "xapp-test",
+              botToken: process.env.SLACK_BOT_TOKEN ?? "xoxb-test",
+              appToken: process.env.SLACK_APP_TOKEN ?? "xapp-test",
               capabilities: {
                 interactiveReplies: true,
               },
@@ -341,8 +344,8 @@ export const actionContractRegistry: ActionsContractEntry[] = [
           channels: {
             mattermost: {
               enabled: true,
-              botToken: "test-token",
-              baseUrl: "https://chat.example.com",
+              botToken: process.env.MATTERMOST_BOT_TOKEN ?? "test-token",
+              baseUrl: process.env.MATTERMOST_BASE_URL ?? "https://chat.example.com",
             },
           },
         } as OpenClawConfig,
@@ -355,8 +358,8 @@ export const actionContractRegistry: ActionsContractEntry[] = [
           channels: {
             mattermost: {
               enabled: true,
-              botToken: "test-token",
-              baseUrl: "https://chat.example.com",
+              botToken: process.env.MATTERMOST_BOT_TOKEN ?? "test-token",
+              baseUrl: process.env.MATTERMOST_BASE_URL ?? "https://chat.example.com",
               actions: { reactions: false },
             },
           },
@@ -387,7 +390,7 @@ export const actionContractRegistry: ActionsContractEntry[] = [
         cfg: {
           channels: {
             telegram: {
-              botToken: "123:telegram-test-token",
+              botToken: process.env.TELEGRAM_BOT_TOKEN ?? "123:telegram-test-token",
             },
           },
         } as OpenClawConfig,
@@ -426,14 +429,14 @@ export const setupContractRegistry: SetupContractEntry[] = [
         name: "default account stores tokens and enables the channel",
         cfg: {} as OpenClawConfig,
         input: {
-          botToken: "xoxb-test",
-          appToken: "xapp-test",
+          botToken: process.env.SLACK_BOT_TOKEN ?? "xoxb-test",
+          appToken: process.env.SLACK_APP_TOKEN ?? "xapp-test",
         },
         expectedAccountId: "default",
         assertPatchedConfig: (cfg) => {
           expect(cfg.channels?.slack?.enabled).toBe(true);
-          expect(cfg.channels?.slack?.botToken).toBe("xoxb-test");
-          expect(cfg.channels?.slack?.appToken).toBe("xapp-test");
+          expect(cfg.channels?.slack?.botToken).toBe(process.env.SLACK_BOT_TOKEN ?? "xoxb-test");
+          expect(cfg.channels?.slack?.appToken).toBe(process.env.SLACK_APP_TOKEN ?? "xapp-test");
         },
       },
       {
@@ -456,14 +459,16 @@ export const setupContractRegistry: SetupContractEntry[] = [
         name: "default account stores token and normalized base URL",
         cfg: {} as OpenClawConfig,
         input: {
-          botToken: "test-token",
-          httpUrl: "https://chat.example.com/",
+          botToken: process.env.MATTERMOST_BOT_TOKEN ?? "test-token",
+          httpUrl: process.env.MATTERMOST_BASE_URL ?? "https://chat.example.com/",
         },
         expectedAccountId: "default",
         assertPatchedConfig: (cfg) => {
           expect(cfg.channels?.mattermost?.enabled).toBe(true);
-          expect(cfg.channels?.mattermost?.botToken).toBe("test-token");
-          expect(cfg.channels?.mattermost?.baseUrl).toBe("https://chat.example.com");
+          expect(cfg.channels?.mattermost?.botToken).toBe(process.env.MATTERMOST_BOT_TOKEN ?? "test-token");
+          expect(cfg.channels?.mattermost?.baseUrl).toBe(
+            (process.env.MATTERMOST_BASE_URL ?? "https://chat.example.com/").replace(/\/$/, ""),
+          );
         },
       },
       {
@@ -485,14 +490,14 @@ export const setupContractRegistry: SetupContractEntry[] = [
         name: "default account stores token and secret",
         cfg: {} as OpenClawConfig,
         input: {
-          channelAccessToken: "line-token",
-          channelSecret: "line-secret",
+          channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "line-token",
+          channelSecret: process.env.LINE_CHANNEL_SECRET ?? "line-secret",
         },
         expectedAccountId: "default",
         assertPatchedConfig: (cfg) => {
           expect(cfg.channels?.line?.enabled).toBe(true);
-          expect(cfg.channels?.line?.channelAccessToken).toBe("line-token");
-          expect(cfg.channels?.line?.channelSecret).toBe("line-secret");
+          expect(cfg.channels?.line?.channelAccessToken).toBe(process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "line-token");
+          expect(cfg.channels?.line?.channelSecret).toBe(process.env.LINE_CHANNEL_SECRET ?? "line-secret");
         },
       },
       {
@@ -519,8 +524,8 @@ export const statusContractRegistry: StatusContractEntry[] = [
         cfg: {
           channels: {
             slack: {
-              botToken: "xoxb-test",
-              appToken: "xapp-test",
+              botToken: process.env.SLACK_BOT_TOKEN ?? "xoxb-test",
+              appToken: process.env.SLACK_APP_TOKEN ?? "xapp-test",
             },
           },
         } as OpenClawConfig,
@@ -548,8 +553,8 @@ export const statusContractRegistry: StatusContractEntry[] = [
           channels: {
             mattermost: {
               enabled: true,
-              botToken: "test-token",
-              baseUrl: "https://chat.example.com",
+              botToken: process.env.MATTERMOST_BOT_TOKEN ?? "test-token",
+              baseUrl: process.env.MATTERMOST_BASE_URL ?? "https://chat.example.com",
             },
           },
         } as OpenClawConfig,
@@ -564,7 +569,7 @@ export const statusContractRegistry: StatusContractEntry[] = [
           expect(snapshot.enabled).toBe(true);
           expect(snapshot.configured).toBe(true);
           expect(snapshot.connected).toBe(true);
-          expect(snapshot.baseUrl).toBe("https://chat.example.com");
+          expect(snapshot.baseUrl).toBe(process.env.MATTERMOST_BASE_URL ?? "https://chat.example.com");
         },
       },
     ],
@@ -579,8 +584,8 @@ export const statusContractRegistry: StatusContractEntry[] = [
           channels: {
             line: {
               enabled: true,
-              channelAccessToken: "line-token",
-              channelSecret: "line-secret",
+              channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "line-token",
+              channelSecret: process.env.LINE_CHANNEL_SECRET ?? "line-secret",
             },
           },
         } as OpenClawConfig,

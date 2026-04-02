@@ -1,13 +1,27 @@
 import os from "node:os";
 import { runCommandWithTimeout, runExec } from "../process/exec.js";
 
+const SAFE_USERNAME_RE = /^[a-zA-Z0-9._-]{1,256}$/;
+
+function sanitizeUsername(value: string): string | null {
+  const trimmed = value.trim();
+  if (SAFE_USERNAME_RE.test(trimmed)) {
+    return trimmed;
+  }
+  return null;
+}
+
 function resolveLoginctlUser(env: Record<string, string | undefined>): string | null {
-  const fromEnv = env.USER?.trim() || env.LOGNAME?.trim();
-  if (fromEnv) {
-    return fromEnv;
+  const fromEnvRaw = env.USER?.trim() || env.LOGNAME?.trim();
+  if (fromEnvRaw) {
+    const sanitized = sanitizeUsername(fromEnvRaw);
+    if (sanitized) {
+      return sanitized;
+    }
   }
   try {
-    return os.userInfo().username;
+    const username = os.userInfo().username;
+    return sanitizeUsername(username);
   } catch {
     return null;
   }
@@ -48,7 +62,15 @@ export async function enableSystemdUserLinger(params: {
   user?: string;
   sudoMode?: "prompt" | "non-interactive";
 }): Promise<{ ok: boolean; stdout: string; stderr: string; code: number }> {
-  const user = params.user ?? resolveLoginctlUser(params.env);
+  let user: string | null;
+  if (params.user !== undefined) {
+    user = sanitizeUsername(params.user);
+    if (!user) {
+      return { ok: false, stdout: "", stderr: "Invalid user", code: 1 };
+    }
+  } else {
+    user = resolveLoginctlUser(params.env);
+  }
   if (!user) {
     return { ok: false, stdout: "", stderr: "Missing user", code: 1 };
   }

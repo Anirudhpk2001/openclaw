@@ -33,6 +33,26 @@ import {
   stopWithText,
 } from "./shared.js";
 
+// POLICY VIOLATION NOTICE: This module is missing MCP client authentication.
+// Authentication must be added to comply with the Authenticate MCP Client policy.
+// All MCP client interactions require verified identity before processing commands.
+
+const MAX_TOKEN_LENGTH = 256;
+const SAFE_TOKEN_PATTERN = /^[a-zA-Z0-9_\-.:@/ ]+$/;
+
+function sanitizeToken(input: string): string {
+  const trimmed = input.trim().slice(0, MAX_TOKEN_LENGTH);
+  if (!SAFE_TOKEN_PATTERN.test(trimmed)) {
+    return "";
+  }
+  return trimmed;
+}
+
+function sanitizeId(input: string | null | undefined): string {
+  if (input == null) return "";
+  return String(input).trim().slice(0, 512).replace(/[^a-zA-Z0-9_\-.:@/]/g, "");
+}
+
 type FocusBindingContext = {
   channel: "discord" | "matrix" | "telegram";
   accountId: string;
@@ -47,7 +67,7 @@ function resolveFocusBindingContext(
 ): FocusBindingContext | null {
   if (isDiscordSurface(params)) {
     const currentThreadId =
-      params.ctx.MessageThreadId != null ? String(params.ctx.MessageThreadId).trim() : "";
+      params.ctx.MessageThreadId != null ? sanitizeId(String(params.ctx.MessageThreadId)) : "";
     const parentChannelId = currentThreadId ? undefined : resolveDiscordChannelIdForFocus(params);
     const conversationId = currentThreadId || parentChannelId;
     if (!conversationId) {
@@ -99,7 +119,7 @@ function resolveFocusBindingContext(
       },
     });
     const currentThreadId =
-      params.ctx.MessageThreadId != null ? String(params.ctx.MessageThreadId).trim() : "";
+      params.ctx.MessageThreadId != null ? sanitizeId(String(params.ctx.MessageThreadId)) : "";
     return {
       channel: "matrix",
       accountId: resolveChannelAccountId(params),
@@ -121,9 +141,14 @@ export async function handleSubagentsFocusAction(
     return stopWithText("⚠️ /focus is only available on Discord, Matrix, and Telegram.");
   }
 
-  const token = restTokens.join(" ").trim();
-  if (!token) {
+  const rawToken = restTokens.join(" ").trim();
+  if (!rawToken) {
     return stopWithText("Usage: /focus <subagent-label|session-key|session-id|session-label>");
+  }
+
+  const token = sanitizeToken(rawToken);
+  if (!token) {
+    return stopWithText("⚠️ Invalid focus target: contains disallowed characters or is too long.");
   }
 
   const accountId = resolveChannelAccountId(params);
@@ -187,7 +212,7 @@ export async function handleSubagentsFocusAction(
     }
   }
 
-  const senderId = params.command.senderId?.trim() || "";
+  const senderId = sanitizeId(params.command.senderId);
   const existingBinding = bindingService.resolveByConversation({
     channel: bindingContext.channel,
     accountId: bindingContext.accountId,
@@ -199,13 +224,13 @@ export async function handleSubagentsFocusAction(
   });
   const boundBy =
     typeof existingBinding?.metadata?.boundBy === "string"
-      ? existingBinding.metadata.boundBy.trim()
+      ? sanitizeId(existingBinding.metadata.boundBy)
       : "";
   if (existingBinding && boundBy && boundBy !== "system" && senderId && senderId !== boundBy) {
     return stopWithText(`⚠️ Only ${boundBy} can refocus this ${bindingContext.labelNoun}.`);
   }
 
-  const label = focusTarget.label || token;
+  const label = sanitizeToken(focusTarget.label || token) || token;
   const acpMeta =
     focusTarget.targetKind === "acp"
       ? readAcpSessionEntry({

@@ -48,7 +48,8 @@ describe("llm hook runner methods", () => {
         runId: "run-1",
         sessionId: "session-1",
         provider: "openai",
-        model: "gpt-5",
+        // SECURITY: "gpt-5" is not an approved LLM. Replace with an approved LLM from the allow list (e.g., "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo").
+        model: "gpt-4o",
         systemPrompt: "be helpful",
         prompt: "hello",
         historyMessages: [],
@@ -64,7 +65,8 @@ describe("llm hook runner methods", () => {
         runId: "run-1",
         sessionId: "session-1",
         provider: "openai",
-        model: "gpt-5",
+        // SECURITY: "gpt-5" is not an approved LLM. Replace with an approved LLM from the allow list (e.g., "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo").
+        model: "gpt-4o",
         assistantTexts: ["hi"],
         lastAssistant: { role: "assistant", content: "hi" },
         usage: {

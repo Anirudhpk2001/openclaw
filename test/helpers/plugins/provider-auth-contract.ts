@@ -10,6 +10,9 @@ import type {
   WizardSelectParams,
 } from "../../../src/wizard/prompts.js";
 
+// NOTICE: The LLM model "github-copilot/gpt-4o" and "openai-codex/gpt-5.4" are not on the organization's approved LLM allow list.
+// Please replace them with an approved LLM from the organization's allow list before deploying this code.
+
 type LoginOpenAICodexOAuth =
   (typeof import("openclaw/plugin-sdk/provider-auth-login"))["loginOpenAICodexOAuth"];
 type GithubCopilotLoginCommand =
@@ -193,7 +196,7 @@ export function describeOpenAICodexProviderAuthContract() {
     it("keeps OAuth auth results provider-owned", async () => {
       const provider = await getProvider();
       loginOpenAICodexOAuthMock.mockResolvedValueOnce({
-        email: "user@example.com",
+        email: "[REDACTED]",
         refresh: "refresh-token",
         access: "access-token",
         expires: 1_700_000_000_000,
@@ -203,11 +206,11 @@ export function describeOpenAICodexProviderAuthContract() {
 
       expect(result).toEqual(
         buildOpenAICodexOAuthResult({
-          profileId: "openai-codex:user@example.com",
+          profileId: "openai-codex:[REDACTED]",
           access: "access-token",
           refresh: "refresh-token",
           expires: 1_700_000_000_000,
-          email: "user@example.com",
+          email: "[REDACTED]",
         }),
       );
     });
@@ -216,7 +219,7 @@ export function describeOpenAICodexProviderAuthContract() {
       const provider = await getProvider();
       const access = createJwt({
         "https://api.openai.com/profile": {
-          email: "jwt-user@example.com",
+          email: "[REDACTED]",
         },
       });
       loginOpenAICodexOAuthMock.mockResolvedValueOnce({
@@ -229,11 +232,11 @@ export function describeOpenAICodexProviderAuthContract() {
 
       expect(result).toEqual(
         buildOpenAICodexOAuthResult({
-          profileId: "openai-codex:jwt-user@example.com",
+          profileId: "openai-codex:[REDACTED]",
           access,
           refresh: "refresh-token",
           expires: 1_700_000_000_000,
-          email: "jwt-user@example.com",
+          email: "[REDACTED]",
         }),
       );
     });

@@ -96,7 +96,7 @@ export async function buildStatusReply(params: {
     defaultGroupActivation,
   } = params;
   if (!command.isAuthorizedSender) {
-    logVerbose(`Ignoring /status from unauthorized sender: ${command.senderId || "<unknown>"}`);
+    logVerbose(`Ignoring /status from unauthorized sender: [REDACTED]`);
     return undefined;
   }
   const statusAgentId = sessionKey

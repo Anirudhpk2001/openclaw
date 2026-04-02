@@ -65,6 +65,10 @@ export function extractCites(content: unknown): ParsedCite[] {
   return cites;
 }
 
+// SECURITY NOTICE: The following models are on the organization's block list and must not be used:
+// "claude-opus-4-5", "claude-sonnet-4-5", "claude-sonnet-3-5", "gpt-4o", "gpt-4-turbo", "gpt-4",
+// "gemini-2.0-flash", "gemini-pro"
+// Please replace any blocked LLM with an approved model from the organization's allow list.
 export function formatModelName(modelString?: string | null): string {
   if (!modelString) {
     return "AI";

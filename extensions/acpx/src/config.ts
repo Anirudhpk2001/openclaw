@@ -200,16 +200,127 @@ function parseAcpxPluginConfig(value: unknown): ParseResult {
   };
 }
 
+const SAFE_COMMAND_PATTERN = /^[a-zA-Z0-9._\-/\\: ]+$/;
+const SAFE_VERSION_PATTERN = /^[a-zA-Z0-9._\-^~*]+$/;
+const SAFE_MCP_SERVER_NAME_PATTERN = /^[a-zA-Z0-9._\-]+$/;
+const MAX_STRING_LENGTH = 4096;
+const MAX_ENV_KEY_LENGTH = 256;
+const MAX_ENV_VALUE_LENGTH = 8192;
+const MAX_MCP_SERVER_NAME_LENGTH = 256;
+const MAX_MCP_SERVERS = 50;
+const MAX_ARGS_COUNT = 100;
+const MAX_ARG_LENGTH = 4096;
+
+function sanitizeString(value: string, maxLength: number = MAX_STRING_LENGTH): string {
+  return value.slice(0, maxLength).replace(/[\0\r\n]/g, "");
+}
+
+function validateMcpServerName(name: string): void {
+  if (!name || name.length > MAX_MCP_SERVER_NAME_LENGTH) {
+    throw new Error(
+      `MCP server name must be between 1 and ${MAX_MCP_SERVER_NAME_LENGTH} characters`,
+    );
+  }
+  if (!SAFE_MCP_SERVER_NAME_PATTERN.test(name)) {
+    throw new Error(
+      `MCP server name contains invalid characters: ${name}`,
+    );
+  }
+}
+
+function validateMcpServerConfig(name: string, config: McpServerConfig): void {
+  validateMcpServerName(name);
+
+  const sanitizedCommand = sanitizeString(config.command);
+  if (!SAFE_COMMAND_PATTERN.test(sanitizedCommand)) {
+    throw new Error(
+      `MCP server command contains invalid characters for server: ${name}`,
+    );
+  }
+
+  if (config.args !== undefined) {
+    if (config.args.length > MAX_ARGS_COUNT) {
+      throw new Error(
+        `MCP server args count exceeds maximum of ${MAX_ARGS_COUNT} for server: ${name}`,
+      );
+    }
+    for (const arg of config.args) {
+      if (typeof arg !== "string") {
+        throw new Error(`MCP server arg must be a string for server: ${name}`);
+      }
+      if (arg.length > MAX_ARG_LENGTH) {
+        throw new Error(
+          `MCP server arg exceeds maximum length of ${MAX_ARG_LENGTH} for server: ${name}`,
+        );
+      }
+    }
+  }
+
+  if (config.env !== undefined) {
+    for (const [key, val] of Object.entries(config.env)) {
+      if (key.length > MAX_ENV_KEY_LENGTH) {
+        throw new Error(
+          `MCP server env key exceeds maximum length of ${MAX_ENV_KEY_LENGTH} for server: ${name}`,
+        );
+      }
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
+        throw new Error(
+          `MCP server env key contains invalid characters: ${key} for server: ${name}`,
+        );
+      }
+      if (typeof val !== "string") {
+        throw new Error(`MCP server env value must be a string for server: ${name}`);
+      }
+      if (val.length > MAX_ENV_VALUE_LENGTH) {
+        throw new Error(
+          `MCP server env value exceeds maximum length of ${MAX_ENV_VALUE_LENGTH} for server: ${name}`,
+        );
+      }
+    }
+  }
+}
+
+function validateAndSanitizeMcpServers(
+  mcpServers: Record<string, McpServerConfig>,
+): Record<string, McpServerConfig> {
+  const serverNames = Object.keys(mcpServers);
+  if (serverNames.length > MAX_MCP_SERVERS) {
+    throw new Error(`Number of MCP servers exceeds maximum of ${MAX_MCP_SERVERS}`);
+  }
+  const sanitized: Record<string, McpServerConfig> = {};
+  for (const [name, config] of Object.entries(mcpServers)) {
+    validateMcpServerConfig(name, config);
+    sanitized[name] = {
+      command: sanitizeString(config.command),
+      args: config.args?.map((arg) => sanitizeString(arg, MAX_ARG_LENGTH)),
+      env:
+        config.env !== undefined
+          ? Object.fromEntries(
+              Object.entries(config.env).map(([k, v]) => [
+                k,
+                sanitizeString(v, MAX_ENV_VALUE_LENGTH),
+              ]),
+            )
+          : undefined,
+    };
+  }
+  return sanitized;
+}
+
 function resolveConfiguredCommand(params: { configured?: string; workspaceDir?: string }): string {
   const configured = params.configured?.trim();
   if (!configured) {
     return ACPX_BUNDLED_BIN;
   }
-  if (path.isAbsolute(configured) || configured.includes(path.sep) || configured.includes("/")) {
-    const baseDir = params.workspaceDir?.trim() || process.cwd();
-    return path.resolve(baseDir, configured);
+  const sanitized = sanitizeString(configured);
+  if (!SAFE_COMMAND_PATTERN.test(sanitized)) {
+    throw new Error(`command contains invalid characters: ${configured}`);
   }
-  return configured;
+  if (path.isAbsolute(sanitized) || sanitized.includes(path.sep) || sanitized.includes("/")) {
+    const baseDir = params.workspaceDir?.trim() || process.cwd();
+    return path.resolve(baseDir, sanitized);
+  }
+  return sanitized;
 }
 
 function resolveOpenClawRoot(currentRoot: string): string {
@@ -250,7 +361,9 @@ function resolveConfiguredMcpServers(params: {
   pluginToolsMcpBridge: boolean;
   moduleUrl?: string;
 }): Record<string, McpServerConfig> {
-  const resolved = { ...(params.mcpServers ?? {}) };
+  const rawServers = params.mcpServers ?? {};
+  const validated = validateAndSanitizeMcpServers(rawServers);
+  const resolved = { ...validated };
   if (!params.pluginToolsMcpBridge) {
     return resolved;
   }
@@ -290,7 +403,9 @@ export function resolveAcpxPluginConfig(params: {
   }
   const normalized = parsed.value ?? {};
   const fallbackCwd = params.workspaceDir?.trim() || process.cwd();
-  const cwd = path.resolve(normalized.cwd?.trim() || fallbackCwd);
+  const rawCwd = normalized.cwd?.trim() || fallbackCwd;
+  const sanitizedCwd = sanitizeString(rawCwd);
+  const cwd = path.resolve(sanitizedCwd);
   const command = resolveConfiguredCommand({
     configured: normalized.command,
     workspaceDir: params.workspaceDir,
@@ -298,6 +413,15 @@ export function resolveAcpxPluginConfig(params: {
   const allowPluginLocalInstall = command === ACPX_BUNDLED_BIN;
   const stripProviderAuthEnvVars = command === ACPX_BUNDLED_BIN;
   const configuredExpectedVersion = normalized.expectedVersion;
+  if (
+    configuredExpectedVersion !== undefined &&
+    configuredExpectedVersion !== ACPX_VERSION_ANY &&
+    !SAFE_VERSION_PATTERN.test(configuredExpectedVersion)
+  ) {
+    throw new Error(
+      `expectedVersion contains invalid characters: ${configuredExpectedVersion}`,
+    );
+  }
   const expectedVersion =
     configuredExpectedVersion === ACPX_VERSION_ANY
       ? undefined

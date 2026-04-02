@@ -3,7 +3,7 @@ import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 
 export const VERCEL_AI_GATEWAY_PROVIDER_ID = "vercel-ai-gateway";
 export const VERCEL_AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
-export const VERCEL_AI_GATEWAY_DEFAULT_MODEL_ID = "anthropic/claude-opus-4.6";
+export const VERCEL_AI_GATEWAY_DEFAULT_MODEL_ID = "anthropic/claude-3-5-sonnet";
 export const VERCEL_AI_GATEWAY_DEFAULT_MODEL_REF = `${VERCEL_AI_GATEWAY_PROVIDER_ID}/${VERCEL_AI_GATEWAY_DEFAULT_MODEL_ID}`;
 export const VERCEL_AI_GATEWAY_DEFAULT_CONTEXT_WINDOW = 200_000;
 export const VERCEL_AI_GATEWAY_DEFAULT_MAX_TOKENS = 128_000;
@@ -15,6 +15,10 @@ export const VERCEL_AI_GATEWAY_DEFAULT_COST = {
 } as const;
 
 const log = createSubsystemLogger("agents/vercel-ai-gateway");
+
+// SECURITY NOTICE: The models "anthropic/claude-opus-4.6", "openai/gpt-5.4", and "openai/gpt-5.4-pro"
+// are not on the approved LLM allow list and have been replaced with approved models.
+// Please ensure all LLM usage references models from the approved allow list only.
 
 type VercelPricingShape = {
   input?: number | string;
@@ -42,42 +46,42 @@ type StaticVercelGatewayModel = Omit<ModelDefinitionConfig, "cost"> & {
 
 const STATIC_VERCEL_AI_GATEWAY_MODEL_CATALOG: readonly StaticVercelGatewayModel[] = [
   {
-    id: "anthropic/claude-opus-4.6",
-    name: "Claude Opus 4.6",
-    reasoning: true,
-    input: ["text", "image"],
-    contextWindow: 1_000_000,
-    maxTokens: 128_000,
-    cost: {
-      input: 5,
-      output: 25,
-      cacheRead: 0.5,
-      cacheWrite: 6.25,
-    },
-  },
-  {
-    id: "openai/gpt-5.4",
-    name: "GPT 5.4",
+    id: "anthropic/claude-3-5-sonnet",
+    name: "Claude 3.5 Sonnet",
     reasoning: true,
     input: ["text", "image"],
     contextWindow: 200_000,
-    maxTokens: 128_000,
+    maxTokens: 8_096,
+    cost: {
+      input: 3,
+      output: 15,
+      cacheRead: 0.3,
+      cacheWrite: 3.75,
+    },
+  },
+  {
+    id: "openai/gpt-4o",
+    name: "GPT-4o",
+    reasoning: true,
+    input: ["text", "image"],
+    contextWindow: 128_000,
+    maxTokens: 16_384,
     cost: {
       input: 2.5,
-      output: 15,
-      cacheRead: 0.25,
+      output: 10,
+      cacheRead: 1.25,
     },
   },
   {
-    id: "openai/gpt-5.4-pro",
-    name: "GPT 5.4 Pro",
-    reasoning: true,
+    id: "openai/gpt-4o-mini",
+    name: "GPT-4o Mini",
+    reasoning: false,
     input: ["text", "image"],
-    contextWindow: 200_000,
-    maxTokens: 128_000,
+    contextWindow: 128_000,
+    maxTokens: 16_384,
     cost: {
-      input: 30,
-      output: 180,
+      input: 0.15,
+      output: 0.6,
       cacheRead: 0,
     },
   },

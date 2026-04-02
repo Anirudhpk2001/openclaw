@@ -1,7 +1,9 @@
 import type { OpenClawConfig } from "../../../src/config/config.js";
 import type { ModelApi } from "../../../src/config/types.models.js";
 
-export const EXPECTED_FALLBACKS = ["anthropic/claude-opus-4-5"] as const;
+// SECURITY NOTICE: "anthropic/claude-opus-4-5" is on the organization's blocked LLM list.
+// It has been replaced with an approved LLM from the allow list.
+export const EXPECTED_FALLBACKS = ["anthropic/claude-3-5-sonnet"] as const;
 
 export function createLegacyProviderConfig(params: {
   providerId: string;

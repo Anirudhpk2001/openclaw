@@ -17,6 +17,10 @@ import { isBlockedObjectKey } from "../infra/prototype-keys.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import { sanitizeForLog } from "../terminal/ansi.js";
 
+// POLICY VIOLATION NOTICE: Missing MCP client authentication detected.
+// Authentication is required to comply with the Authenticate MCP Client policy.
+// Please add authentication to all MCP client interactions before deploying this code.
+
 type ChannelAuthOptions = {
   channel?: string;
   account?: string;
@@ -25,6 +29,36 @@ type ChannelAuthOptions = {
 
 type ChannelPlugin = NonNullable<ReturnType<typeof getChannelPlugin>>;
 type ChannelAuthMode = "login" | "logout";
+
+const CHANNEL_ID_PATTERN = /^[a-zA-Z0-9_\-\.]+$/;
+const ACCOUNT_ID_PATTERN = /^[a-zA-Z0-9_\-\.@]+$/;
+const MAX_INPUT_LENGTH = 256;
+
+function sanitizeAndValidateChannelInput(input: string | undefined): string | undefined {
+  if (input === undefined) return undefined;
+  const trimmed = input.trim();
+  if (trimmed.length === 0) return undefined;
+  if (trimmed.length > MAX_INPUT_LENGTH) {
+    throw new Error(`Channel input exceeds maximum allowed length of ${MAX_INPUT_LENGTH} characters.`);
+  }
+  if (!CHANNEL_ID_PATTERN.test(trimmed)) {
+    throw new Error(`Invalid channel input: contains disallowed characters.`);
+  }
+  return trimmed;
+}
+
+function sanitizeAndValidateAccountInput(input: string | undefined): string | undefined {
+  if (input === undefined) return undefined;
+  const trimmed = input.trim();
+  if (trimmed.length === 0) return undefined;
+  if (trimmed.length > MAX_INPUT_LENGTH) {
+    throw new Error(`Account input exceeds maximum allowed length of ${MAX_INPUT_LENGTH} characters.`);
+  }
+  if (!ACCOUNT_ID_PATTERN.test(trimmed)) {
+    throw new Error(`Invalid account input: contains disallowed characters.`);
+  }
+  return trimmed;
+}
 
 function supportsChannelAuthMode(plugin: ChannelPlugin, mode: ChannelAuthMode): boolean {
   return mode === "login" ? Boolean(plugin.auth?.login) : Boolean(plugin.gateway?.logoutAccount);
@@ -94,7 +128,7 @@ async function resolveChannelPluginForMode(
   channelId: string;
   plugin: ChannelPlugin;
 }> {
-  const explicitChannel = opts.channel?.trim();
+  const explicitChannel = sanitizeAndValidateChannelInput(opts.channel);
   const channelInput = explicitChannel || resolveConfiguredAuthChannelInput(cfg, mode);
   const normalizedChannelId = normalizeChannelId(channelInput);
 
@@ -108,11 +142,11 @@ async function resolveChannelPluginForMode(
   });
   const channelId = resolved.channelId ?? normalizedChannelId;
   if (!channelId) {
-    throw new Error(`Unsupported channel: ${channelInput}`);
+    throw new Error(`Unsupported channel: ${sanitizeForLog(channelInput)}`);
   }
   const plugin = resolved.plugin;
   if (!plugin || !supportsChannelAuthMode(plugin, mode)) {
-    throw new Error(`Channel ${channelId} does not support ${mode}`);
+    throw new Error(`Channel ${sanitizeForLog(channelId)} does not support ${mode}`);
   }
   return {
     cfg: resolved.cfg,
@@ -128,7 +162,8 @@ function resolveAccountContext(
   opts: ChannelAuthOptions,
   cfg: OpenClawConfig,
 ) {
-  const accountId = opts.account?.trim() || resolveChannelDefaultAccountId({ plugin, cfg });
+  const sanitizedAccount = sanitizeAndValidateAccountInput(opts.account);
+  const accountId = sanitizedAccount || resolveChannelDefaultAccountId({ plugin, cfg });
   return { accountId };
 }
 
@@ -156,7 +191,7 @@ export async function runChannelLogin(
   }
   const login = plugin.auth?.login;
   if (!login) {
-    throw new Error(`Channel ${channelInput} does not support login`);
+    throw new Error(`Channel ${sanitizeForLog(channelInput)} does not support login`);
   }
   // Auth-only flow: do not mutate channel config here.
   setVerbose(Boolean(opts.verbose));
@@ -194,7 +229,7 @@ export async function runChannelLogout(
   }
   const logoutAccount = plugin.gateway?.logoutAccount;
   if (!logoutAccount) {
-    throw new Error(`Channel ${channelInput} does not support logout`);
+    throw new Error(`Channel ${sanitizeForLog(channelInput)} does not support logout`);
   }
   // Auth-only flow: resolve account + clear session state only.
   const { accountId } = resolveAccountContext(plugin, opts, cfg);
