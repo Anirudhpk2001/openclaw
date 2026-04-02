@@ -31,6 +31,133 @@ const log = createSubsystemLogger("ollama-stream");
 
 export const OLLAMA_NATIVE_BASE_URL = OLLAMA_DEFAULT_BASE_URL;
 
+// ---------------------------------------------------------------------------
+// Input sanitization helpers
+// ---------------------------------------------------------------------------
+
+const DYNAMIC_CODE_EXEC_PATTERN =
+  /\beval\s*\(|\bexec\s*\(|\bsubprocess\s*\(|\bos\.system\s*\(|\bshell\s*=\s*True\b/gi;
+
+const SUSPICIOUS_PROMPT_PATTERNS: RegExp[] = [
+  // base64 encoded blobs (long base64 strings)
+  /(?:[A-Za-z0-9+/]{40,}={0,2})/,
+  // invisible / zero-width characters
+  /[\u200B-\u200D\uFEFF\u00AD]/,
+  // leet-speak indicators (common substitutions in bulk)
+  /(?:[4@][Ss][Ss]|[Ss][Ee][Cc][Uu][Rr][Ii][Tt][Yy]|[Ii][Gg][Nn][Oo][Rr][3])/i,
+  // shell command patterns
+  /(?:\/bin\/(?:sh|bash|zsh|dash)|cmd\.exe|powershell(?:\.exe)?)/i,
+  // binary / non-printable content (outside normal unicode text ranges)
+  /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/,
+  // prompt injection keywords
+  /(?:ignore\s+(?:previous|above|all)\s+instructions?|system\s*prompt|you\s+are\s+now|disregard\s+(?:all|previous))/i,
+];
+
+function containsSuspiciousContent(text: string): boolean {
+  for (const pattern of SUSPICIOUS_PROMPT_PATTERNS) {
+    if (pattern.test(text)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function sanitizeInputText(text: string): string {
+  // Remove zero-width / invisible characters
+  let sanitized = text.replace(/[\u200B-\u200D\uFEFF\u00AD]/g, "");
+  // Remove non-printable control characters (keep newlines/tabs)
+  sanitized = sanitized.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+  return sanitized;
+}
+
+function validateAndSanitizeMessages(
+  messages: Array<{ role: string; content: unknown }>,
+): Array<{ role: string; content: unknown }> {
+  return messages.map((msg) => {
+    if (typeof msg.content === "string") {
+      const sanitized = sanitizeInputText(msg.content);
+      if (containsSuspiciousContent(sanitized)) {
+        log.warn(
+          `[INPUT-VALIDATION] Suspicious content detected in message role="${msg.role}". Content will be sanitized.`,
+        );
+      }
+      return { ...msg, content: sanitized };
+    }
+    if (Array.isArray(msg.content)) {
+      const sanitizedParts = (msg.content as Array<unknown>).map((part) => {
+        if (
+          part !== null &&
+          typeof part === "object" &&
+          "type" in (part as object) &&
+          (part as { type: unknown }).type === "text" &&
+          "text" in (part as object)
+        ) {
+          const textPart = part as { type: string; text: string };
+          const sanitized = sanitizeInputText(textPart.text);
+          if (containsSuspiciousContent(sanitized)) {
+            log.warn(
+              `[INPUT-VALIDATION] Suspicious content detected in text part role="${msg.role}". Content will be sanitized.`,
+            );
+          }
+          return { ...textPart, text: sanitized };
+        }
+        return part;
+      });
+      return { ...msg, content: sanitizedParts };
+    }
+    return msg;
+  });
+}
+
+function validateAndSanitizeSystemPrompt(systemPrompt: string | undefined): string | undefined {
+  if (!systemPrompt) {
+    return systemPrompt;
+  }
+  const sanitized = sanitizeInputText(systemPrompt);
+  if (containsSuspiciousContent(sanitized)) {
+    log.warn(
+      "[INPUT-VALIDATION] Suspicious content detected in system prompt. Content will be sanitized.",
+    );
+  }
+  return sanitized;
+}
+
+// ---------------------------------------------------------------------------
+// Response sanitization helpers
+// ---------------------------------------------------------------------------
+
+function sanitizeLlmResponseText(text: string): string {
+  const lines = text.split("\n");
+  const filtered = lines.filter((line) => {
+    if (DYNAMIC_CODE_EXEC_PATTERN.test(line)) {
+      log.warn(
+        `[RESPONSE-SANITIZATION] Removed line containing dynamic code execution primitive: ${line.slice(0, 120)}`,
+      );
+      // Reset lastIndex for global regex
+      DYNAMIC_CODE_EXEC_PATTERN.lastIndex = 0;
+      return false;
+    }
+    DYNAMIC_CODE_EXEC_PATTERN.lastIndex = 0;
+    return true;
+  });
+  return filtered.join("\n");
+}
+
+function sanitizeOllamaChatResponse(response: OllamaChatResponse): OllamaChatResponse {
+  if (response.message?.content) {
+    response = {
+      ...response,
+      message: {
+        ...response.message,
+        content: sanitizeLlmResponseText(response.message.content),
+      },
+    };
+  }
+  return response;
+}
+
+// ---------------------------------------------------------------------------
+
 export function resolveOllamaBaseUrlForRun(params: {
   modelBaseUrl?: string;
   providerBaseUrl?: string;
@@ -676,9 +803,13 @@ export function createOllamaStreamFn(
 
     const run = async () => {
       try {
+        // Sanitize and validate inputs before sending to LLM
+        const sanitizedMessages = validateAndSanitizeMessages(context.messages ?? []);
+        const sanitizedSystemPrompt = validateAndSanitizeSystemPrompt(context.systemPrompt);
+
         const ollamaMessages = convertToOllamaMessages(
-          context.messages ?? [],
-          context.systemPrompt,
+          sanitizedMessages,
+          sanitizedSystemPrompt,
         );
         const ollamaTools = extractOllamaTools(context.tools);
 
@@ -697,6 +828,12 @@ export function createOllamaStreamFn(
           tools: ollamaTools,
           options: ollamaOptions,
         });
+
+        // Log the outgoing LLM interaction
+        log.info(
+          `[LLM-INTERACTION] Sending request to Ollama model="${model.id}" provider="${model.provider}" messageCount=${ollamaMessages.length} hasTools=${ollamaTools.length > 0} url="${chatUrl}"`,
+        );
+
         options?.onPayload?.(body, model);
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
@@ -719,6 +856,9 @@ export function createOllamaStreamFn(
 
         if (!response.ok) {
           const errorText = await response.text().catch(() => "unknown error");
+          log.warn(
+            `[LLM-INTERACTION] Ollama request failed model="${model.id}" status=${response.status}`,
+          );
           throw new Error(`${response.status} ${errorText}`);
         }
         if (!response.body) {
@@ -752,7 +892,10 @@ export function createOllamaStreamFn(
           });
         };
 
-        for await (const chunk of parseNdjsonStream(reader)) {
+        for await (const rawChunk of parseNdjsonStream(reader)) {
+          // Sanitize the LLM response chunk
+          const chunk = sanitizeOllamaChatResponse(rawChunk);
+
           if (chunk.message?.content) {
             const delta = chunk.message.content;
 
@@ -800,6 +943,11 @@ export function createOllamaStreamFn(
 
         const assistantMessage = buildAssistantMessage(finalResponse, modelInfo);
 
+        // Log the received LLM response
+        log.info(
+          `[LLM-INTERACTION] Received response from Ollama model="${model.id}" stopReason="${assistantMessage.stopReason}" inputTokens=${assistantMessage.usage?.input ?? 0} outputTokens=${assistantMessage.usage?.output ?? 0}`,
+        );
+
         // Close the text block if we emitted any text_delta events.
         closeTextBlock();
 
@@ -809,6 +957,9 @@ export function createOllamaStreamFn(
           message: assistantMessage,
         });
       } catch (err) {
+        log.error(
+          `[LLM-INTERACTION] Error during Ollama stream model="${model.id}": ${err instanceof Error ? err.message : String(err)}`,
+        );
         stream.push({
           type: "error",
           reason: "error",
