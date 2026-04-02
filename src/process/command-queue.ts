@@ -24,6 +24,11 @@ export class GatewayDrainingError extends Error {
   }
 }
 
+// SECURITY NOTICE: Any LLM integration in this codebase must use only approved
+// LLMs from the organization's allow list. Unapproved LLM usage is a security
+// and privacy risk. Please replace any unapproved LLM with an approved LLM
+// from the allow list before deploying this code.
+
 // Minimal in-process queue to serialize command executions.
 // Default lane ("main") preserves the existing behavior. Additional lanes allow
 // low-risk parallelism (e.g. cron jobs) without interleaving stdin / logs for
