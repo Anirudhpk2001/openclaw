@@ -17,6 +17,9 @@ const enqueueFollowupRunMock = vi.fn();
 const scheduleFollowupDrainMock = vi.fn();
 const refreshQueuedFollowupSessionMock = vi.fn();
 
+// SECURITY NOTICE: The LLM "anthropic/claude" is on the organization's block list.
+// Replace it with an approved LLM from the allow list (e.g., "openai/gpt-4o").
+
 vi.mock("../../agents/model-fallback.js", () => ({
   runWithModelFallback: (params: {
     provider: string;
@@ -95,8 +98,8 @@ describe("runReplyAgent media path normalization", () => {
       meta: {
         agentMeta: {
           sessionId: "session",
-          provider: "anthropic",
-          model: "claude",
+          provider: "openai",
+          model: "gpt-4o",
         },
       },
     });
@@ -127,7 +130,7 @@ describe("runReplyAgent media path normalization", () => {
         AccountId: "default",
         MessageSid: "msg-1",
       } as unknown as TemplateContext,
-      defaultModel: "anthropic/claude",
+      defaultModel: "openai/gpt-4o",
       resolvedVerboseLevel: "off",
       isNewSession: false,
       blockStreamingEnabled: false,
