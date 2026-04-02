@@ -27,18 +27,55 @@ type SendPayloadAdapter = Pick<
   "sendMedia" | "sendText" | "chunker" | "textChunkLimit"
 >;
 
+const MAX_TEXT_LENGTH = 100_000;
+const MAX_URL_LENGTH = 2_048;
+const MAX_ID_LENGTH = 512;
+const MAX_MEDIA_URLS = 50;
+
+function sanitizeString(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.slice(0, maxLength);
+  return trimmed;
+}
+
+function isValidUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function sanitizeMediaUrl(url: unknown): string | undefined {
+  if (typeof url !== "string") {
+    return undefined;
+  }
+  const trimmed = url.trim().slice(0, MAX_URL_LENGTH);
+  if (!trimmed || !isValidUrl(trimmed)) {
+    return undefined;
+  }
+  return trimmed;
+}
+
 /** Extract the supported outbound reply fields from loose tool or agent payload objects. */
 export function normalizeOutboundReplyPayload(
   payload: Record<string, unknown>,
 ): OutboundReplyPayload {
-  const text = typeof payload.text === "string" ? payload.text : undefined;
+  const text = sanitizeString(payload.text, MAX_TEXT_LENGTH);
   const mediaUrls = Array.isArray(payload.mediaUrls)
-    ? payload.mediaUrls.filter(
-        (entry): entry is string => typeof entry === "string" && entry.length > 0,
-      )
+    ? payload.mediaUrls
+        .slice(0, MAX_MEDIA_URLS)
+        .map((entry) => sanitizeMediaUrl(entry))
+        .filter((entry): entry is string => entry !== undefined && entry.length > 0)
     : undefined;
-  const mediaUrl = typeof payload.mediaUrl === "string" ? payload.mediaUrl : undefined;
-  const replyToId = typeof payload.replyToId === "string" ? payload.replyToId : undefined;
+  const rawMediaUrl = sanitizeMediaUrl(payload.mediaUrl);
+  const mediaUrl = rawMediaUrl !== undefined && rawMediaUrl.length > 0 ? rawMediaUrl : undefined;
+  const rawReplyToId = sanitizeString(payload.replyToId, MAX_ID_LENGTH);
+  const replyToId =
+    rawReplyToId !== undefined && /^[\w\-.:@#/]+$/.test(rawReplyToId) ? rawReplyToId : undefined;
   return {
     text,
     mediaUrls,
@@ -66,10 +103,15 @@ export function resolveOutboundMediaUrls(payload: {
   mediaUrl?: string;
 }): string[] {
   if (payload.mediaUrls?.length) {
-    return payload.mediaUrls;
+    return payload.mediaUrls
+      .map((u) => sanitizeMediaUrl(u))
+      .filter((u): u is string => u !== undefined && u.length > 0);
   }
   if (payload.mediaUrl) {
-    return [payload.mediaUrl];
+    const sanitized = sanitizeMediaUrl(payload.mediaUrl);
+    if (sanitized) {
+      return [sanitized];
+    }
   }
   return [];
 }
@@ -108,7 +150,8 @@ export function resolveSendableOutboundReplyParts(
   payload: { text?: string; mediaUrls?: string[]; mediaUrl?: string },
   options?: { text?: string },
 ): SendableOutboundReplyParts {
-  const text = options?.text ?? payload.text ?? "";
+  const rawText = options?.text ?? payload.text ?? "";
+  const text = rawText.slice(0, MAX_TEXT_LENGTH);
   const trimmedText = text.trim();
   const mediaUrls = resolveOutboundMediaUrls(payload)
     .map((entry) => entry.trim())
@@ -151,7 +194,8 @@ export async function sendPayloadWithChunkedTextAndMedia<
   emptyResult: TResult;
 }): Promise<TResult> {
   const payload = params.ctx.payload as { text?: string; mediaUrls?: string[]; mediaUrl?: string };
-  const text = payload.text ?? "";
+  const rawText = payload.text ?? "";
+  const text = rawText.slice(0, MAX_TEXT_LENGTH);
   const urls = resolveOutboundMediaUrls(payload);
   if (!text && urls.length === 0) {
     return params.emptyResult;
@@ -192,7 +236,11 @@ export async function sendPayloadMediaSequence<TResult>(params: {
 }): Promise<TResult | undefined> {
   let lastResult: TResult | undefined;
   for (let i = 0; i < params.mediaUrls.length; i += 1) {
-    const mediaUrl = params.mediaUrls[i];
+    const rawMediaUrl = params.mediaUrls[i];
+    if (!rawMediaUrl) {
+      continue;
+    }
+    const mediaUrl = sanitizeMediaUrl(rawMediaUrl);
     if (!mediaUrl) {
       continue;
     }
@@ -246,7 +294,8 @@ export async function sendTextMediaPayload(params: {
   ctx: SendPayloadContext;
   adapter: SendPayloadAdapter;
 }): Promise<SendPayloadResult> {
-  const text = params.ctx.payload.text ?? "";
+  const rawText = params.ctx.payload.text ?? "";
+  const text = rawText.slice(0, MAX_TEXT_LENGTH);
   const urls = resolvePayloadMediaUrls(params.ctx.payload);
   if (!text && urls.length === 0) {
     return { channel: params.channel, messageId: "" };
@@ -288,19 +337,24 @@ export function formatTextWithAttachmentLinks(
   mediaUrls: string[],
 ): string {
   const trimmedText = text?.trim() ?? "";
-  if (!trimmedText && mediaUrls.length === 0) {
+  const sanitizedText = trimmedText.slice(0, MAX_TEXT_LENGTH);
+  const sanitizedUrls = mediaUrls
+    .slice(0, MAX_MEDIA_URLS)
+    .map((url) => sanitizeMediaUrl(url))
+    .filter((url): url is string => url !== undefined && url.length > 0);
+  if (!sanitizedText && sanitizedUrls.length === 0) {
     return "";
   }
-  const mediaBlock = mediaUrls.length
-    ? mediaUrls.map((url) => `Attachment: ${url}`).join("\n")
+  const mediaBlock = sanitizedUrls.length
+    ? sanitizedUrls.map((url) => `Attachment: ${url}`).join("\n")
     : "";
-  if (!trimmedText) {
+  if (!sanitizedText) {
     return mediaBlock;
   }
   if (!mediaBlock) {
-    return trimmedText;
+    return sanitizedText;
   }
-  return `${trimmedText}\n\n${mediaBlock}`;
+  return `${sanitizedText}\n\n${mediaBlock}`;
 }
 
 /** Send a caption with only the first media item, mirroring caption-limited channel transports. */
@@ -320,9 +374,19 @@ export async function sendMediaWithLeadingCaption(params: {
     return false;
   }
 
-  for (const [index, mediaUrl] of params.mediaUrls.entries()) {
+  const sanitizedCaption = params.caption.slice(0, MAX_TEXT_LENGTH);
+  const sanitizedUrls = params.mediaUrls
+    .slice(0, MAX_MEDIA_URLS)
+    .map((url) => sanitizeMediaUrl(url))
+    .filter((url): url is string => url !== undefined && url.length > 0);
+
+  if (sanitizedUrls.length === 0) {
+    return false;
+  }
+
+  for (const [index, mediaUrl] of sanitizedUrls.entries()) {
     const isFirst = index === 0;
-    const caption = isFirst ? params.caption : undefined;
+    const caption = isFirst ? sanitizedCaption : undefined;
     try {
       await params.send({ mediaUrl, caption });
     } catch (error) {
@@ -356,22 +420,23 @@ export async function deliverTextOrMediaReply(params: {
     isFirst: boolean;
   }) => Promise<void> | void;
 }): Promise<"empty" | "text" | "media"> {
+  const sanitizedText = params.text.slice(0, MAX_TEXT_LENGTH);
   const { mediaUrls } = resolveSendableOutboundReplyParts(params.payload, {
-    text: params.text,
+    text: sanitizedText,
   });
   const sentMedia = await sendMediaWithLeadingCaption({
     mediaUrls,
-    caption: params.text,
+    caption: sanitizedText,
     send: params.sendMedia,
     onError: params.onMediaError,
   });
   if (sentMedia) {
     return "media";
   }
-  if (!params.text) {
+  if (!sanitizedText) {
     return "empty";
   }
-  const chunks = params.chunkText ? params.chunkText(params.text) : [params.text];
+  const chunks = params.chunkText ? params.chunkText(sanitizedText) : [sanitizedText];
   let sentText = false;
   for (const chunk of chunks) {
     if (!chunk) {
