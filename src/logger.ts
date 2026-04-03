@@ -40,6 +40,7 @@ const warn = theme.warn;
 const success = theme.success;
 const danger = theme.error;
 
+/** Logs an informational message to the console and structured logger. */
 export function logInfo(message: string, runtime: RuntimeEnv = defaultRuntime) {
   logWithSubsystem({
     message,
@@ -51,6 +52,7 @@ export function logInfo(message: string, runtime: RuntimeEnv = defaultRuntime) {
   });
 }
 
+/** Logs a warning message to the console and structured logger. */
 export function logWarn(message: string, runtime: RuntimeEnv = defaultRuntime) {
   logWithSubsystem({
     message,
@@ -62,6 +64,7 @@ export function logWarn(message: string, runtime: RuntimeEnv = defaultRuntime) {
   });
 }
 
+/** Logs a success message to the console and structured logger. */
 export function logSuccess(message: string, runtime: RuntimeEnv = defaultRuntime) {
   logWithSubsystem({
     message,
@@ -73,6 +76,7 @@ export function logSuccess(message: string, runtime: RuntimeEnv = defaultRuntime
   });
 }
 
+/** Logs an error message to the console and structured logger. */
 export function logError(message: string, runtime: RuntimeEnv = defaultRuntime) {
   logWithSubsystem({
     message,
@@ -85,6 +89,13 @@ export function logError(message: string, runtime: RuntimeEnv = defaultRuntime) 
 }
 
 export function logDebug(message: string) {
+  // Route subsystem-prefixed messages (e.g. "matrix: foo") to the correct
+  // subsystem logger so debug output is grouped consistently with other levels.
+  const parsed = splitSubsystem(message);
+  if (parsed) {
+    createSubsystemLogger(parsed.subsystem).debug(parsed.rest);
+    return;
+  }
   // Always emit to file logger (level-filtered); console only when verbose.
   getLogger().debug(message);
   if (isVerbose()) {

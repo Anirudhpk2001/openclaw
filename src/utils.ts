@@ -11,6 +11,7 @@ import {
 import { isPlainObject } from "./infra/plain-object.js";
 import { formatTerminalLink } from "./terminal/terminal-link.js";
 
+/** Creates a directory and all intermediate parents if they do not already exist. */
 export async function ensureDir(dir: string) {
   await fs.promises.mkdir(dir, { recursive: true });
 }
