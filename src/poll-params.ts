@@ -1,4 +1,5 @@
 import { readSnakeCaseParamRaw } from "./param-key.js";
+import { parseBooleanValue } from "./utils/boolean.js";
 
 export type PollCreationParamKind = "string" | "stringArray" | "number" | "boolean";
 
@@ -84,10 +85,9 @@ export function hasPollCreationParams(params: Record<string, unknown>): boolean 
       }
     }
     if (def.kind === "boolean") {
-      if (value === true) {
-        return true;
-      }
-      if (typeof value === "string" && value.trim().toLowerCase() === "true") {
+      // Use the shared parser so "1", "yes", "on" etc. are recognised
+      // consistently with the rest of the codebase.
+      if (parseBooleanValue(value) === true) {
         return true;
       }
     }
