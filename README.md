@@ -32,15 +32,64 @@ New install? Start here: [Getting started](https://docs.openclaw.ai/start/gettin
 
 ## Sponsors
 
-| OpenAI                                                            | Vercel                                                            | Blacksmith                                                                   | Convex                                                                |
-| ----------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| [![OpenAI](docs/assets/sponsors/openai.svg)](https://openai.com/) | [![Vercel](docs/assets/sponsors/vercel.svg)](https://vercel.com/) | [![Blacksmith](docs/assets/sponsors/blacksmith.svg)](https://blacksmith.sh/) | [![Convex](docs/assets/sponsors/convex.svg)](https://www.convex.dev/) |
+<table>
+  <tr>
+    <td align="center" width="16.66%">
+      <a href="https://openai.com/">
+        <picture>
+          <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/openai-light.svg">
+          <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/openai.svg" alt="OpenAI" height="28">
+        </picture>
+      </a>
+    </td>
+    <td align="center" width="16.66%">
+      <a href="https://github.com/">
+        <picture>
+          <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/github-light.svg">
+          <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/github.svg" alt="GitHub" height="28">
+        </picture>
+      </a>
+    </td>
+    <td align="center" width="16.66%">
+      <a href="https://www.nvidia.com/">
+        <picture>
+          <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/nvidia.svg">
+          <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/nvidia-dark.svg" alt="NVIDIA" height="28">
+        </picture>
+      </a>
+    </td>
+    <td align="center" width="16.66%">
+      <a href="https://vercel.com/">
+        <picture>
+          <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/vercel-light.svg">
+          <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/vercel.svg" alt="Vercel" height="24">
+        </picture>
+      </a>
+    </td>
+    <td align="center" width="16.66%">
+      <a href="https://blacksmith.sh/">
+        <picture>
+          <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/blacksmith-light.svg">
+          <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/blacksmith.svg" alt="Blacksmith" height="28">
+        </picture>
+      </a>
+    </td>
+    <td align="center" width="16.66%">
+      <a href="https://www.convex.dev/">
+        <picture>
+          <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/convex-light.svg">
+          <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/convex.svg" alt="Convex" height="24">
+        </picture>
+      </a>
+    </td>
+  </tr>
+</table>
 
 **Subscriptions (OAuth):**
 
 - **[OpenAI](https://openai.com/)** (ChatGPT/Codex)
 
-Model note: while many providers/models are supported, for the best experience and lower prompt-injection risk use the strongest latest-generation model available to you. See [Onboarding](https://docs.openclaw.ai/start/onboarding).
+Model note: while many providers and models are supported, prefer a current flagship model from the provider you trust and already use. See [Onboarding](https://docs.openclaw.ai/start/onboarding).
 
 ## Models (selection + auth)
 
@@ -276,6 +325,7 @@ Send these in WhatsApp/Telegram/Slack/Google Chat/Microsoft Teams/WebChat (group
 - `/compact` — compact session context (summary)
 - `/think <level>` — off|minimal|low|medium|high|xhigh (GPT-5.2 + Codex models only)
 - `/verbose on|off`
+- `/trace on|off` — plugin trace/debug lines only
 - `/usage off|tokens|full` — per-response usage footer
 - `/restart` — restart the gateway (owner-only in groups)
 - `/activation mention|always` — group activation toggle (groups only)
@@ -322,7 +372,7 @@ Minimal `~/.openclaw/openclaw.json` (model + defaults):
 ```json5
 {
   agent: {
-    model: "anthropic/claude-opus-4-6",
+    model: "<provider>/<model-id>",
   },
 }
 ```
