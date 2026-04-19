@@ -62,9 +62,15 @@ async function readExistingModelsFile(pathname: string): Promise<{
 }> {
   try {
     const raw = await fs.readFile(pathname, "utf8");
+    let parsed: unknown = null;
+    try {
+      parsed = JSON.parse(raw) as unknown;
+    } catch {
+      parsed = null;
+    }
     return {
       raw,
-      parsed: JSON.parse(raw) as unknown,
+      parsed,
     };
   } catch {
     return {
@@ -116,6 +122,15 @@ function resolveModelsConfigInput(config?: OpenClawConfig): {
   };
 }
 
+function safeResolvePath(baseDir: string, filename: string): string {
+  const resolved = path.resolve(baseDir, filename);
+  const normalizedBase = path.resolve(baseDir);
+  if (!resolved.startsWith(normalizedBase + path.sep) && resolved !== normalizedBase) {
+    throw new Error("Path traversal detected: resolved path escapes base directory");
+  }
+  return resolved;
+}
+
 async function withModelsJsonWriteLock<T>(targetPath: string, run: () => Promise<T>): Promise<T> {
   const prior = MODELS_JSON_STATE.writeLocks.get(targetPath) ?? Promise.resolve();
   let release: () => void = () => {};
@@ -142,11 +157,12 @@ export async function ensureOpenClawModelsJson(
   const resolved = resolveModelsConfigInput(config);
   const cfg = resolved.config;
   const agentDir = agentDirOverride?.trim() ? agentDirOverride.trim() : resolveOpenClawAgentDir();
-  const targetPath = path.join(agentDir, "models.json");
+  const resolvedAgentDir = path.resolve(agentDir);
+  const targetPath = safeResolvePath(resolvedAgentDir, "models.json");
   const fingerprint = await buildModelsJsonFingerprint({
     config: cfg,
     sourceConfigForSecrets: resolved.sourceConfigForSecrets,
-    agentDir,
+    agentDir: resolvedAgentDir,
   });
   const cached = MODELS_JSON_STATE.readyCache.get(targetPath);
   if (cached) {
@@ -165,25 +181,25 @@ export async function ensureOpenClawModelsJson(
     const plan = await planOpenClawModelsJson({
       cfg,
       sourceConfigForSecrets: resolved.sourceConfigForSecrets,
-      agentDir,
+      agentDir: resolvedAgentDir,
       env,
       existingRaw: existingModelsFile.raw,
       existingParsed: existingModelsFile.parsed,
     });
 
     if (plan.action === "skip") {
-      return { fingerprint, result: { agentDir, wrote: false } };
+      return { fingerprint, result: { agentDir: resolvedAgentDir, wrote: false } };
     }
 
     if (plan.action === "noop") {
       await ensureModelsFileModeForModelsJson(targetPath);
-      return { fingerprint, result: { agentDir, wrote: false } };
+      return { fingerprint, result: { agentDir: resolvedAgentDir, wrote: false } };
     }
 
-    await fs.mkdir(agentDir, { recursive: true, mode: 0o700 });
+    await fs.mkdir(resolvedAgentDir, { recursive: true, mode: 0o700 });
     await writeModelsFileAtomicForModelsJson(targetPath, plan.contents);
     await ensureModelsFileModeForModelsJson(targetPath);
-    return { fingerprint, result: { agentDir, wrote: true } };
+    return { fingerprint, result: { agentDir: resolvedAgentDir, wrote: true } };
   });
   MODELS_JSON_STATE.readyCache.set(targetPath, pending);
   try {
