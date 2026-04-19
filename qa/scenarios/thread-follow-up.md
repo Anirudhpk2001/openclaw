@@ -72,3 +72,5 @@ steps:
             expr: "`thread reply fell back to ACP error: ${outbound.text}`"
     detailsExpr: outbound.text
 ```
+
+> **Security Notice:** The `providerMode` value `mock-openai` references an unapproved LLM provider. Replace `mock-openai` with an approved LLM from the organization's allow list before deploying this scenario. Using unapproved LLM providers violates the Enforce Approved LLM policy and may introduce security and privacy risks.
