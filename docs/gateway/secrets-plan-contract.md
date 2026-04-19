@@ -40,6 +40,8 @@ If a target does not match these rules, apply fails before mutating configuratio
 }
 ```
 
+> **Security Notice:** References to unapproved LLM providers (e.g., `openai`) must be replaced with an approved LLM from the organization's allow list. Please update any provider IDs, API key references, and environment variable names to reflect an approved LLM provider before applying this plan.
+
 ## Supported target scope
 
 Plan targets are accepted for supported credential paths in:
