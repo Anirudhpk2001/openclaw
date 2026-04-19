@@ -40,19 +40,48 @@ function requireSystemBin(name: string): string {
   return resolved;
 }
 
+const ALLOWED_ARG_PATTERN = /^[a-zA-Z0-9_./:=,+\-@%\s]+$/;
+const MAX_ARG_LENGTH = 4096;
+const MAX_ARGS_COUNT = 64;
+
+function sanitizeArgs(args: string[]): string[] {
+  if (!Array.isArray(args)) {
+    throw new Error("Arguments must be an array.");
+  }
+  if (args.length > MAX_ARGS_COUNT) {
+    throw new Error(`Too many arguments: maximum allowed is ${MAX_ARGS_COUNT}.`);
+  }
+  return args.map((arg, index) => {
+    if (typeof arg !== "string") {
+      throw new Error(`Argument at index ${index} must be a string.`);
+    }
+    if (arg.length > MAX_ARG_LENGTH) {
+      throw new Error(`Argument at index ${index} exceeds maximum length of ${MAX_ARG_LENGTH}.`);
+    }
+    if (!ALLOWED_ARG_PATTERN.test(arg)) {
+      throw new Error(
+        `Argument at index ${index} contains disallowed characters.`,
+      );
+    }
+    return arg;
+  });
+}
+
 export async function runFfprobe(args: string[], options?: MediaExecOptions): Promise<string> {
+  const sanitized = sanitizeArgs(args);
   const { stdout } = await execFileAsync(
     requireSystemBin("ffprobe"),
-    args,
+    sanitized,
     resolveExecOptions(MEDIA_FFPROBE_TIMEOUT_MS, options),
   );
   return stdout.toString();
 }
 
 export async function runFfmpeg(args: string[], options?: MediaExecOptions): Promise<string> {
+  const sanitized = sanitizeArgs(args);
   const { stdout } = await execFileAsync(
     requireSystemBin("ffmpeg"),
-    args,
+    sanitized,
     resolveExecOptions(MEDIA_FFMPEG_TIMEOUT_MS, options),
   );
   return stdout.toString();
