@@ -21,6 +21,10 @@ execution:
   summary: Verify reasoning-only turns after a write do not auto-retry.
   config:
     requiredProvider: mock-openai
+    # SECURITY NOTICE: The provider referenced as 'mock-openai' must map to an
+    # approved LLM from the organization allow list before use in any non-mock
+    # or production context. Unapproved LLMs are not permitted. Please replace
+    # any unapproved LLM backend with an approved LLM from the allow list.
     promptSnippet: Reasoning-only after write safety check
     prompt: "Reasoning-only after write safety check: write reasoning-only-side-effect.txt, then answer with exactly SIDE-EFFECT-GUARD-OK."
     retryNeedle: recorded reasoning but did not produce a user-visible answer
