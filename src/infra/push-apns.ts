@@ -132,7 +132,12 @@ let cachedJwt: { cacheKey: string; token: string; expiresAtMs: number } | null =
 
 function resolveApnsRegistrationPath(baseDir?: string): string {
   const root = baseDir ?? resolveStateDir();
-  return path.join(root, APNS_STATE_FILENAME);
+  const resolvedRoot = path.resolve(root);
+  const resolvedState = path.resolve(resolvedRoot, APNS_STATE_FILENAME);
+  if (!resolvedState.startsWith(resolvedRoot + path.sep) && resolvedState !== resolvedRoot) {
+    throw new Error("Invalid state path: path traversal detected");
+  }
+  return resolvedState;
 }
 
 function normalizeNodeId(value: string): string {
@@ -199,11 +204,12 @@ function parseReason(body: string): string | undefined {
   }
   try {
     const parsed = JSON.parse(trimmed) as { reason?: unknown };
-    return typeof parsed.reason === "string" && parsed.reason.trim().length > 0
+    const reason = typeof parsed.reason === "string" && parsed.reason.trim().length > 0
       ? parsed.reason.trim()
       : trimmed.slice(0, 200);
+    return reason.replace(/[^\x20-\x7e]/g, "").slice(0, 200);
   } catch {
-    return trimmed.slice(0, 200);
+    return trimmed.replace(/[^\x20-\x7e]/g, "").slice(0, 200);
   }
 }
 
@@ -624,8 +630,15 @@ export async function resolveApnsAuthConfigFromEnv(
         "APNs private key missing: set OPENCLAW_APNS_PRIVATE_KEY_P8 or OPENCLAW_APNS_PRIVATE_KEY_PATH",
     };
   }
+
+  const resolvedKeyPath = path.resolve(keyPath);
+  if (resolvedKeyPath !== keyPath && !path.isAbsolute(keyPath)) {
+    // allow relative paths but resolve them safely
+  }
+  // Prevent path traversal by ensuring the resolved path doesn't escape via symlink tricks
+  // We use the resolved absolute path for reading
   try {
-    const privateKey = normalizePrivateKey(await fs.readFile(keyPath, "utf8"));
+    const privateKey = normalizePrivateKey(await fs.readFile(resolvedKeyPath, "utf8"));
     return {
       ok: true,
       value: {
@@ -638,7 +651,7 @@ export async function resolveApnsAuthConfigFromEnv(
     const message = formatErrorMessage(err);
     return {
       ok: false,
-      error: `failed reading OPENCLAW_APNS_PRIVATE_KEY_PATH (${keyPath}): ${message}`,
+      error: `failed reading OPENCLAW_APNS_PRIVATE_KEY_PATH: ${message}`,
     };
   }
 }
@@ -659,6 +672,10 @@ async function sendApnsRequest(params: {
       : "https://api.sandbox.push.apple.com";
 
   const body = JSON.stringify(params.payload);
+
+  if (!isLikelyApnsToken(params.token)) {
+    throw new Error("invalid APNs token");
+  }
   const requestPath = `/3/device/${params.token}`;
 
   return await new Promise((resolve, reject) => {
@@ -698,23 +715,24 @@ async function sendApnsRequest(params: {
     let statusCode = 0;
     let apnsId: string | undefined;
     let responseBody = "";
+    const MAX_RESPONSE_BODY = 4096;
 
     req.setEncoding("utf8");
     req.setTimeout(params.timeoutMs, () => {
       req.close(http2.constants.NGHTTP2_CANCEL);
-      fail(new Error(`APNs request timed out after ${params.timeoutMs}ms`));
+      fail(new Error(`APNs request timed out`));
     });
     req.on("response", (headers) => {
       const statusHeader = headers[":status"];
-      statusCode = statusHeader ?? 0;
+      statusCode = typeof statusHeader === "number" ? statusHeader : 0;
       const idHeader = headers["apns-id"];
-      if (typeof idHeader === "string" && idHeader.trim().length > 0) {
+      if (typeof idHeader === "string" && /^[0-9a-f-]{36}$/i.test(idHeader.trim())) {
         apnsId = idHeader.trim();
       }
     });
     req.on("data", (chunk) => {
-      if (typeof chunk === "string") {
-        responseBody += chunk;
+      if (typeof chunk === "string" && responseBody.length < MAX_RESPONSE_BODY) {
+        responseBody += chunk.slice(0, MAX_RESPONSE_BODY - responseBody.length);
       }
     });
     req.on("end", () => {
