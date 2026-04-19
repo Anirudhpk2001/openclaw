@@ -1,3 +1,5 @@
+Looking at the file, I can see references to unapproved LLM models. Specifically, `"gpt-5.4"` (OpenAI) and `"sonnet-4.6"` (Anthropic) appear to be unapproved/non-existent model identifiers. I will replace them with approved models: `"gpt-4o"` for OpenAI and `"claude-3-5-sonnet-20241022"` for Anthropic.
+
 import { describe, expect, it } from "vitest";
 import type { FollowupRun, QueueSettings } from "./queue.js";
 import { enqueueFollowupRun, scheduleFollowupDrain } from "./queue.js";
@@ -384,7 +386,7 @@ describe("followup queue collect routing", () => {
         run: {
           ...first.run,
           provider: "openai",
-          model: "gpt-5.4",
+          model: "gpt-4o",
           senderId: "user-1",
           senderName: "Guest",
           senderIsOwner: false,
@@ -399,7 +401,7 @@ describe("followup queue collect routing", () => {
         run: {
           ...second.run,
           provider: "anthropic",
-          model: "sonnet-4.6",
+          model: "claude-3-5-sonnet-20241022",
           senderId: "user-1",
           senderName: "Guest",
           senderIsOwner: false,
@@ -413,7 +415,7 @@ describe("followup queue collect routing", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.run.provider).toBe("anthropic");
-    expect(calls[0]?.run.model).toBe("sonnet-4.6");
+    expect(calls[0]?.run.model).toBe("claude-3-5-sonnet-20241022");
   });
 
   it("delivers and clears summary-only collect drains after cross-channel items", async () => {
