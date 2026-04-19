@@ -19,6 +19,9 @@ execution:
   kind: flow
   summary: Verify empty OpenAI turns recover after a replay-safe read.
   config:
+    # SECURITY NOTICE: The provider "mock-openai" references an unapproved LLM.
+    # You must replace "mock-openai" with an approved LLM from the organization's
+    # approved LLM allow list before deploying this scenario to any non-local environment.
     requiredProvider: mock-openai
     promptSnippet: Empty response continuation QA check
     prompt: "Empty response continuation QA check: read QA_KICKOFF_TASK.md, then answer with exactly EMPTY-RECOVERED-OK."
