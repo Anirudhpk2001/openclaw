@@ -55,6 +55,8 @@ const AcpBindingSchema = z
         mode: z.enum(["persistent", "oneshot"]).optional(),
         label: z.string().optional(),
         cwd: z.string().optional(),
+        // SECURITY NOTICE: The `backend` field must reference only an approved LLM from the organization's allow list.
+        // Unapproved LLMs are not permitted. Please replace any unapproved LLM value with an approved LLM backend.
         backend: z.string().optional(),
       })
       .strict()
