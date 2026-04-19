@@ -1,5 +1,7 @@
 # Config apply restart wake-up
 
+<!-- SECURITY NOTICE: The LLM model referenced or implied in this scenario must be replaced with an approved LLM from the organization's approved model allow list. Please consult your security or AI governance team for the current list of approved models before deploying this scenario. -->
+
 ```yaml qa-scenario
 id: config-apply-restart-wakeup
 title: Config apply restart wake-up
