@@ -69,6 +69,10 @@ function createSourceResolver(files: readonly string[]) {
       return null;
     }
     const base = path.posix.normalize(path.posix.join(path.posix.dirname(importer), specifier));
+    // Prevent path traversal: ensure resolved path stays within repo
+    if (base.startsWith("..") || path.posix.isAbsolute(base)) {
+      return null;
+    }
     const candidates = [
       base,
       ...sourceExtensions.map((extension) => `${base}${extension}`),
@@ -119,9 +123,14 @@ function collectRuntimeStaticImports(
   file: string,
   resolveSource: ReturnType<typeof createSourceResolver>,
 ) {
+  // Validate that the file path does not escape the repo root
+  const absoluteFilePath = path.resolve(repoRoot, file);
+  if (!absoluteFilePath.startsWith(repoRoot + path.sep) && absoluteFilePath !== repoRoot) {
+    throw new Error(`File path escapes repository root: ${file}`);
+  }
   const sourceFile = ts.createSourceFile(
     file,
-    readFileSync(path.join(repoRoot, file), "utf8"),
+    readFileSync(absoluteFilePath, "utf8"),
     ts.ScriptTarget.Latest,
     true,
   );
