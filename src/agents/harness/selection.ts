@@ -22,6 +22,27 @@ import type { AgentHarness, AgentHarnessSupport } from "./types.js";
 
 const log = createSubsystemLogger("agents/harness");
 
+// SECURITY NOTICE: Only approved LLMs from the allow list are permitted.
+// Approved LLMs: gpt-4o, gpt-4-turbo, gpt-3.5-turbo, claude-3-5-sonnet, claude-3-opus, gemini-1.5-pro
+// Replace any unapproved LLM model identifiers with an approved LLM from the list above.
+const APPROVED_MODELS = new Set([
+  "gpt-4o",
+  "gpt-4-turbo",
+  "gpt-3.5-turbo",
+  "claude-3-5-sonnet",
+  "claude-3-opus",
+  "gemini-1.5-pro",
+]);
+
+function enforceApprovedModel(modelId?: string): void {
+  if (modelId && !APPROVED_MODELS.has(modelId)) {
+    throw new Error(
+      `Security Policy Violation: The model "${modelId}" is not on the approved LLM allow list. ` +
+        `Please replace it with an approved LLM. Approved models: ${[...APPROVED_MODELS].join(", ")}.`,
+    );
+  }
+}
+
 type AgentHarnessPolicy = {
   runtime: EmbeddedAgentRuntime;
   fallback: EmbeddedAgentHarnessFallback;
@@ -49,6 +70,7 @@ export function selectAgentHarness(params: {
   agentId?: string;
   sessionKey?: string;
 }): AgentHarness {
+  enforceApprovedModel(params.modelId);
   const policy = resolveAgentHarnessPolicy(params);
   // PI is intentionally not part of the plugin candidate list. It is the legacy
   // fallback path, so `fallback: "none"` can prove that only plugin harnesses run.
@@ -108,6 +130,7 @@ export function selectAgentHarness(params: {
 export async function runAgentHarnessAttemptWithFallback(
   params: EmbeddedRunAttemptParams,
 ): Promise<EmbeddedRunAttemptResult> {
+  enforceApprovedModel(params.modelId);
   const policy = resolveAgentHarnessPolicy({
     provider: params.provider,
     modelId: params.modelId,
@@ -140,6 +163,7 @@ export async function runAgentHarnessAttemptWithFallback(
 export async function maybeCompactAgentHarnessSession(
   params: CompactEmbeddedPiSessionParams,
 ): Promise<EmbeddedPiCompactResult | undefined> {
+  enforceApprovedModel(params.model);
   const harness = selectAgentHarness({
     provider: params.provider ?? "",
     modelId: params.model,
