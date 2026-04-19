@@ -7,6 +7,8 @@ let server: ReturnType<typeof createServer> | null = null;
 let port = 0;
 let realFetch: BrowserTestFetch;
 
+const BROWSER_CONTROL_TOKEN = process.env.BROWSER_CONTROL_TOKEN ?? "browser-control-secret";
+
 describe("browser control HTTP auth", () => {
   beforeAll(() => {
     realFetch = getBrowserTestFetch();
@@ -14,7 +16,7 @@ describe("browser control HTTP auth", () => {
 
   beforeEach(async () => {
     server = createServer((req: IncomingMessage, res: ServerResponse) => {
-      if (!isAuthorizedBrowserRequest(req, { token: "browser-control-secret" })) {
+      if (!isAuthorizedBrowserRequest(req, { token: BROWSER_CONTROL_TOKEN })) {
         res.statusCode = 401;
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.end("Unauthorized");
@@ -60,7 +62,7 @@ describe("browser control HTTP auth", () => {
 
     const ok = await realFetch(`${base}/`, {
       headers: {
-        Authorization: "Bearer browser-control-secret",
+        Authorization: `Bearer ${BROWSER_CONTROL_TOKEN}`,
       },
     });
     expect(ok.status).toBe(200);
