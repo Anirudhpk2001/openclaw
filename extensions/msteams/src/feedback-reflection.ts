@@ -79,6 +79,66 @@ export type RunFeedbackReflectionParams = {
   log: MSTeamsMonitorLogger;
 };
 
+const MAX_INPUT_LENGTH = 4096;
+const DANGEROUS_CODE_PATTERNS = [
+  /\beval\s*\(/gi,
+  /\bexec\s*\(/gi,
+  /\bsubprocess\s*\(/gi,
+  /\bspawn\s*\(/gi,
+  /\bFunction\s*\(/gi,
+  /\bnew\s+Function\b/gi,
+  /\bsetTimeout\s*\(\s*["'`]/gi,
+  /\bsetInterval\s*\(\s*["'`]/gi,
+  /\bshell\s*=\s*True/gi,
+  /\bos\.system\s*\(/gi,
+  /\bos\.popen\s*\(/gi,
+  /\b__import__\s*\(/gi,
+  /\bimportlib\b/gi,
+];
+
+function sanitizeLLMInput(input: string | undefined): string | undefined {
+  if (input === undefined || input === null) {
+    return undefined;
+  }
+  // Truncate to max length
+  let sanitized = input.slice(0, MAX_INPUT_LENGTH);
+  // Strip null bytes and control characters (except newlines and tabs)
+  sanitized = sanitized.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+  // Escape prompt injection attempts: strip sequences that could break out of prompt context
+  sanitized = sanitized.replace(/```/g, "'''");
+  // Remove any attempts to inject system-level instructions
+  sanitized = sanitized.replace(/\[INST\]|\[\/INST\]|<\|system\|>|<\|user\|>|<\|assistant\|>/gi, "");
+  return sanitized;
+}
+
+function sanitizeLLMResponse(response: string): string {
+  if (!response) return response;
+  // Remove lines containing dangerous code-execution primitives
+  const lines = response.split("\n");
+  const safeLines = lines.filter((line) => {
+    for (const pattern of DANGEROUS_CODE_PATTERNS) {
+      pattern.lastIndex = 0;
+      if (pattern.test(line)) {
+        return false;
+      }
+    }
+    return true;
+  });
+  return safeLines.join("\n");
+}
+
+function validateLLMInput(input: string | undefined, fieldName: string, log: MSTeamsMonitorLogger): boolean {
+  if (input === undefined) return true;
+  if (typeof input !== "string") {
+    log.error("LLM input validation failed: not a string", { field: fieldName });
+    return false;
+  }
+  if (input.length > MAX_INPUT_LENGTH) {
+    log.debug?.("LLM input truncated", { field: fieldName, originalLength: input.length });
+  }
+  return true;
+}
+
 function buildReflectionContext(params: {
   cfg: OpenClawConfig;
   conversationId: string;
@@ -179,10 +239,31 @@ export async function runFeedbackReflection(params: RunFeedbackReflectionParams)
     return;
   }
 
+  // Validate inputs before sanitization
+  validateLLMInput(params.thumbedDownResponse, "thumbedDownResponse", log);
+  validateLLMInput(params.userComment, "userComment", log);
+
+  // Sanitize inputs before sending to LLM
+  const sanitizedThumbedDownResponse = sanitizeLLMInput(params.thumbedDownResponse);
+  const sanitizedUserComment = sanitizeLLMInput(params.userComment);
+
   const reflectionPrompt = buildReflectionPrompt({
-    thumbedDownResponse: params.thumbedDownResponse,
-    userComment: params.userComment,
+    thumbedDownResponse: sanitizedThumbedDownResponse,
+    userComment: sanitizedUserComment,
   });
+
+  // Log LLM interaction: input
+  log.info("llm_interaction_start", {
+    sessionKey,
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+    feedbackMessageId: params.feedbackMessageId,
+    promptLength: reflectionPrompt.length,
+    hasUserComment: Boolean(sanitizedUserComment),
+    hasThumbedDownResponse: Boolean(sanitizedThumbedDownResponse),
+    ts: Date.now(),
+  });
+
   const runtime = getMSTeamsRuntime();
   const storePath = runtime.channel.session.resolveStorePath(cfg.session?.store, {
     agentId: params.agentId,
@@ -200,6 +281,7 @@ export async function runFeedbackReflection(params: RunFeedbackReflectionParams)
     log,
   });
 
+  const dispatchStartTs = Date.now();
   try {
     await dispatchReplyFromConfigWithSettledDispatcher({
       ctxPayload,
@@ -210,13 +292,51 @@ export async function runFeedbackReflection(params: RunFeedbackReflectionParams)
     });
   } catch (err) {
     log.error("reflection dispatch failed", { error: formatUnknownError(err) });
+    // Log LLM interaction: error
+    log.info("llm_interaction_error", {
+      sessionKey,
+      agentId: params.agentId,
+      conversationId: params.conversationId,
+      durationMs: Date.now() - dispatchStartTs,
+      error: formatUnknownError(err),
+      ts: Date.now(),
+    });
     return;
   }
 
-  const reflectionResponse = capture.readResponse().trim();
-  if (!reflectionResponse) {
+  const rawReflectionResponse = capture.readResponse().trim();
+
+  // Log LLM interaction: raw response received
+  log.info("llm_interaction_response", {
+    sessionKey,
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+    durationMs: Date.now() - dispatchStartTs,
+    responseLength: rawReflectionResponse.length,
+    ts: Date.now(),
+  });
+
+  if (!rawReflectionResponse) {
     log.debug?.("reflection produced no output");
     return;
+  }
+
+  // Sanitize and validate LLM response
+  const reflectionResponse = sanitizeLLMResponse(rawReflectionResponse);
+
+  if (!reflectionResponse) {
+    log.debug?.("reflection response was empty after sanitization");
+    return;
+  }
+
+  if (reflectionResponse.length !== rawReflectionResponse.length) {
+    log.info("llm_response_sanitized", {
+      sessionKey,
+      agentId: params.agentId,
+      originalLength: rawReflectionResponse.length,
+      sanitizedLength: reflectionResponse.length,
+      ts: Date.now(),
+    });
   }
 
   const parsedReflection = parseReflectionResponse(reflectionResponse);
