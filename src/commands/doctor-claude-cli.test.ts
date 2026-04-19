@@ -72,7 +72,7 @@ describe("noteClaudeCliHealth", () => {
         {
           agents: {
             defaults: {
-              model: { primary: "claude-cli/claude-sonnet-4-6" },
+              model: { primary: "claude-cli/gpt-4o" },
             },
           },
         },
@@ -119,7 +119,7 @@ describe("noteClaudeCliHealth", () => {
         {
           agents: {
             defaults: {
-              model: { primary: "claude-cli/claude-sonnet-4-6" },
+              model: { primary: "claude-cli/gpt-4o" },
             },
           },
         },
@@ -155,7 +155,7 @@ describe("noteClaudeCliHealth", () => {
         {
           agents: {
             defaults: {
-              model: { primary: "claude-cli/claude-sonnet-4-6" },
+              model: { primary: "claude-cli/gpt-4o" },
             },
           },
         },
