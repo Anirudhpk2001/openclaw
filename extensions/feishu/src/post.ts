@@ -48,6 +48,19 @@ function sanitizeFenceLanguage(language: string): string {
   return language.trim().replace(/[^A-Za-z0-9_+#.-]/g, "");
 }
 
+function sanitizeHref(href: string): string {
+  const trimmed = href.trim();
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "https:" && url.protocol !== "http:" && url.protocol !== "mailto:") {
+      return "";
+    }
+    return trimmed;
+  } catch {
+    return "";
+  }
+}
+
 function renderTextElement(element: Record<string, unknown>): string {
   const text = toStringOrEmpty(element.text);
   const style = isRecord(element.style) ? element.style : undefined;
@@ -81,9 +94,10 @@ function renderTextElement(element: Record<string, unknown>): string {
 }
 
 function renderLinkElement(element: Record<string, unknown>): string {
-  const href = toStringOrEmpty(element.href).trim();
+  const rawHref = toStringOrEmpty(element.href).trim();
+  const href = sanitizeHref(rawHref);
   const rawText = toStringOrEmpty(element.text);
-  const text = rawText || href;
+  const text = rawText || rawHref;
   if (!text) {
     return "";
   }
