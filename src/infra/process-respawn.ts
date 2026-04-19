@@ -53,11 +53,27 @@ export function restartGatewayProcessWithFreshPid(): GatewayRespawnResult {
   }
 
   try {
-    const args = [...process.execArgv, ...process.argv.slice(1)];
-    const child = spawn(process.execPath, args, {
-      env: process.env,
+    const execPath = process.execPath;
+    const execArgv = process.execArgv.map((arg) => String(arg));
+    const argv = process.argv.slice(1).map((arg) => String(arg));
+    const args = [...execArgv, ...argv];
+
+    // Sanitize environment: strip variables that could influence interpreter behavior
+    const safeEnv: NodeJS.ProcessEnv = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined) {
+        safeEnv[key] = value;
+      }
+    }
+    // Remove environment variables that can alter Node.js/shell execution behavior
+    delete safeEnv["NODE_OPTIONS"];
+    delete safeEnv["NODE_PATH"];
+    delete safeEnv["NODE_DEBUG"];
+
+    const child = spawn(execPath, args, {
+      env: safeEnv,
       detached: true,
-      stdio: "inherit",
+      stdio: "ignore",
     });
     child.unref();
     return { mode: "spawned", pid: child.pid ?? undefined };
