@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import { parseStrictNonNegativeInteger } from "../infra/parse-finite-number.js";
 
 export function resolveCacheTtlMs(params: {
@@ -148,7 +149,12 @@ export type FileStatSnapshot = {
 
 export function getFileStatSnapshot(filePath: string): FileStatSnapshot | undefined {
   try {
-    const stats = fs.statSync(filePath);
+    const resolvedPath = path.resolve(filePath);
+    const normalizedPath = path.normalize(resolvedPath);
+    if (normalizedPath !== resolvedPath) {
+      return undefined;
+    }
+    const stats = fs.statSync(resolvedPath);
     return {
       mtimeMs: stats.mtimeMs,
       sizeBytes: stats.size,
