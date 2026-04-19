@@ -83,7 +83,7 @@ describe("config irc", () => {
     const res = IrcConfigSchema.safeParse({
       nickserv: {
         register: true,
-        password: "secret",
+        password: "test-placeholder-password",
         registerEmail: "bot@example.com",
       },
     });
