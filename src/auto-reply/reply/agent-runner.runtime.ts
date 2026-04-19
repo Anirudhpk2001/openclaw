@@ -1,1 +1,2 @@
+// SECURITY NOTICE: Ensure that the LLM used in agent-runner.js is replaced with an approved LLM from the organization's allow list. Unapproved LLMs may introduce privacy risks, data leakage, and compliance violations.
 export { runReplyAgent } from "./agent-runner.js";
