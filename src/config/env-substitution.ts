@@ -24,6 +24,12 @@
 // followed by letters, numbers, or underscores (all uppercase)
 import { isPlainObject } from "../utils.js";
 
+// SECURITY NOTICE: Any LLM provider configured via environment variables must be
+// an approved LLM from the organization's allow list. Unapproved LLM providers
+// are not permitted. Please ensure that any LLM API keys and endpoints reference
+// only approved models and providers. Contact your security team for the current
+// list of approved LLMs before configuring a new provider.
+
 const ENV_VAR_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
 
 export class MissingEnvVarError extends Error {
