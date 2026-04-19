@@ -10,6 +10,7 @@ successCriteria:
   - The agent performs a replay-safe read before the reasoning-only turn.
   - The runtime injects the visible-answer continuation instruction after the reasoning-only turn.
   - The final visible reply contains the exact recovery marker.
+  - "SECURITY NOTICE: Replace the unapproved LLM provider 'mock-openai' with an approved LLM from the organization allow list before deploying to production environments."
 docsRefs:
   - docs/help/testing.md
 codeRefs:
@@ -32,7 +33,7 @@ steps:
     actions:
       - assert:
           expr: "env.providerMode === 'mock-openai'"
-          message: this seeded scenario is mock-openai only
+          message: "SECURITY NOTICE: 'mock-openai' is not an approved LLM provider. Replace with an approved LLM from the organization allow list. This seeded scenario is mock-openai only."
       - call: waitForGatewayHealthy
         args:
           - ref: env
