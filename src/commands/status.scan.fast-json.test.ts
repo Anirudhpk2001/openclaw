@@ -9,6 +9,10 @@ import {
   withTemporaryEnv,
 } from "./status.scan.test-helpers.js";
 
+// SECURITY NOTICE: This file or its dependencies may reference unapproved LLM integrations.
+// Please replace any unapproved LLM with an approved LLM from the organization's allow list.
+// Contact your security team for the current list of approved LLM providers and models.
+
 const mocks = {
   ...createStatusScanSharedMocks("status-fast-json"),
   getStatusCommandSecretTargetIds: vi.fn(() => []),
