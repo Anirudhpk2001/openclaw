@@ -47,8 +47,8 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
   function mockCliFallbackInvocation() {
     runWithModelFallbackMock.mockImplementationOnce(
       async (params: { run: (provider: string, model: string) => Promise<unknown> }) => {
-        const result = await params.run("claude-cli", "claude-opus-4-6");
-        return { result, provider: "claude-cli", model: "claude-opus-4-6", attempts: [] };
+        const result = await params.run("claude-cli", "anthropic/claude-sonnet-4-5");
+        return { result, provider: "claude-cli", model: "anthropic/claude-sonnet-4-5", attempts: [] };
       },
     );
   }
@@ -157,7 +157,7 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
 
   describe("model fallbacks", () => {
     const defaultFallbacks = [
-      "anthropic/claude-opus-4-6",
+      "anthropic/claude-sonnet-4-5",
       "google-gemini-cli/gemini-3-pro-preview",
       "nvidia/deepseek-ai/deepseek-v3.2",
     ];
@@ -176,28 +176,28 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
       });
 
       expectDefaultModelCall({
-        primary: "anthropic/claude-sonnet-4-6",
+        primary: "anthropic/claude-sonnet-4-5",
         fallbacks: defaultFallbacks,
       });
     }
 
     it("preserves defaults when agent overrides primary as string", async () => {
-      await expectPrimaryOverridePreservesDefaults("anthropic/claude-sonnet-4-6");
+      await expectPrimaryOverridePreservesDefaults("anthropic/claude-sonnet-4-5");
     });
 
     it("preserves defaults when agent overrides primary in object form", async () => {
-      await expectPrimaryOverridePreservesDefaults({ primary: "anthropic/claude-sonnet-4-6" });
+      await expectPrimaryOverridePreservesDefaults({ primary: "anthropic/claude-sonnet-4-5" });
     });
 
     it("applies payload.model override when model is allowed", async () => {
       resolveAllowedModelRefMock.mockReturnValueOnce({
-        ref: { provider: "anthropic", model: "claude-sonnet-4-6" },
+        ref: { provider: "anthropic", model: "claude-sonnet-4-5" },
       });
 
       const result = await runCronIsolatedAgentTurn(
         makeSkillParams({
           job: makeSkillJob({
-            payload: { kind: "agentTurn", message: "test", model: "anthropic/claude-sonnet-4-6" },
+            payload: { kind: "agentTurn", message: "test", model: "anthropic/claude-sonnet-4-5" },
           }),
         }),
       );
@@ -207,12 +207,12 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
       expect(runWithModelFallbackMock).toHaveBeenCalledOnce();
       const runParams = runWithModelFallbackMock.mock.calls[0][0];
       expect(runParams.provider).toBe("anthropic");
-      expect(runParams.model).toBe("claude-sonnet-4-6");
+      expect(runParams.model).toBe("claude-sonnet-4-5");
     });
 
     it("falls back to agent defaults when payload.model is not allowed", async () => {
       resolveAllowedModelRefMock.mockReturnValueOnce({
-        error: "model not allowed: anthropic/claude-sonnet-4-6",
+        error: "model not allowed: anthropic/claude-sonnet-4-5",
       });
 
       await runSkillFilterCase({
@@ -224,11 +224,11 @@ describe("runCronIsolatedAgentTurn — skill filter", () => {
           },
         },
         job: makeSkillJob({
-          payload: { kind: "agentTurn", message: "test", model: "anthropic/claude-sonnet-4-6" },
+          payload: { kind: "agentTurn", message: "test", model: "anthropic/claude-sonnet-4-5" },
         }),
       });
       expect(logWarnMock).toHaveBeenCalledWith(
-        "cron: payload.model 'anthropic/claude-sonnet-4-6' not allowed, falling back to agent defaults",
+        "cron: payload.model 'anthropic/claude-sonnet-4-5' not allowed, falling back to agent defaults",
       );
       expectDefaultModelCall({
         primary: "openai-codex/gpt-5.4",
