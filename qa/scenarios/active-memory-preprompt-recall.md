@@ -23,6 +23,7 @@ gatewayConfigPatch:
           transcriptDir: qa-memory-e2e
           queryMode: recent
           maxSummaryChars: 220
+          # SECURITY NOTICE: Replace any unapproved LLM model references with an approved LLM from the organization's allow list before deploying this configuration.
 successCriteria:
   - With Active Memory off, the session shows no Active Memory plugin activity.
   - With Active Memory on, plugin-owned evidence shows the Active Memory sub-agent searched memory before the main reply.
@@ -216,6 +217,7 @@ steps:
               value:
                 expr: "(await fetchJson(`${env.mock.baseUrl}/debug/requests`)).slice(requestCountBeforeActive)"
             - assert:
+                # SECURITY NOTICE: Ensure the LLM model used in 'mock-openai-server.ts' and referenced here is replaced with an approved LLM from the organization's allow list.
                 expr: "mockRequests.some((request) => request.allInputText.includes('You are a memory search agent.') && request.plannedToolName === 'memory_search')"
                 message: expected mock Active Memory search request
             - assert:
