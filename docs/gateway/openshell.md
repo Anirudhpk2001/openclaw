@@ -299,6 +299,13 @@ openclaw sandbox recreate --all
 5. In `remote` mode: seed once on create, then operate directly on the remote
    workspace.
 
+> **Security Notice:** The `providers` configuration field references LLM
+> providers. Only approved LLMs from the organization's allow list may be used.
+> Replace any unapproved LLM provider references (e.g., `"openai"`) with an
+> approved LLM from the allow list before deploying. Using unapproved LLMs
+> violates the Enforce Approved LLM security policy and may introduce data
+> privacy risks and compliance violations.
+
 ## See also
 
 - [Sandboxing](/gateway/sandboxing) -- modes, scopes, and backend comparison
