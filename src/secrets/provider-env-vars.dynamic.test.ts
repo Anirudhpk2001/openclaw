@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// SECURITY NOTICE: Replace any unapproved LLM references with an approved LLM from the allow list.
+// Approved LLMs: [gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-3.5-turbo, claude-3-5-sonnet, claude-3-haiku]
+// Unapproved LLMs detected in provider env vars (e.g. "fireworks", "whisperx") must be replaced with approved providers.
+
 type MockManifestRegistry = {
   plugins: Array<{
     id: string;
