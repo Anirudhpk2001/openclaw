@@ -12,6 +12,10 @@ import type { RuntimeWebDiagnostic, RuntimeWebDiagnosticCode } from "./runtime-w
 export { isRecord } from "./shared.js";
 import { isRecord } from "./shared.js";
 
+// SECURITY NOTICE: Any LLM provider configured in this system must be from the approved list.
+// Unapproved LLM providers are not permitted. Please replace any unapproved LLM with an
+// approved LLM from the organization's allow list before deploying this configuration.
+
 const loadResolveManifestContractOwnerPluginId = createLazyRuntimeNamedExport(
   () => import("./runtime-web-tools-manifest.runtime.js"),
   "resolveManifestContractOwnerPluginId",
@@ -176,7 +180,7 @@ export async function resolveRuntimeWebProviderSurface<
       value: params.rawProvider,
       origin: "bundled",
       config: params.sourceConfig,
-      env: { ...process.env, ...params.context.env },
+      env: { ...params.context.env },
     });
   }
   let allProviders = params.sortProviders(
@@ -199,7 +203,7 @@ export async function resolveRuntimeWebProviderSurface<
       value: params.rawProvider,
       origin: "bundled",
       config: params.sourceConfig,
-      env: { ...process.env, ...params.context.env },
+      env: { ...params.context.env },
     });
     allProviders = params.sortProviders(
       await params.resolveProviders({
@@ -232,9 +236,10 @@ export async function resolveRuntimeWebProviderSurface<
   );
 
   if (params.rawProvider && !configuredProvider) {
+    const sanitizedRawProvider = String(params.rawProvider).replace(/[^\w\-_.]/g, "");
     const diagnostic: RuntimeWebDiagnostic = {
       code: params.invalidAutoDetectCode,
-      message: `${params.providerPath} is "${params.rawProvider}". Falling back to auto-detect precedence.`,
+      message: `${params.providerPath} is "${sanitizedRawProvider}". Falling back to auto-detect precedence.`,
       path: params.providerPath,
     };
     params.diagnostics.push(diagnostic);
@@ -309,11 +314,17 @@ export async function resolveRuntimeWebProviderSelection<
       });
 
       if (resolution.secretRefConfigured && resolution.fallbackUsedAfterRefFailure) {
+        const sanitizedFallbackEnvVar = resolution.fallbackEnvVar
+          ? String(resolution.fallbackEnvVar).replace(/[^\w\-_.]/g, "")
+          : "env fallback";
+        const sanitizedUnresolvedRefReason = resolution.unresolvedRefReason
+          ? String(resolution.unresolvedRefReason).replace(/[<>"'&]/g, "")
+          : "";
         const diagnostic: RuntimeWebDiagnostic = {
           code: params.fallbackUsedCode,
           message:
-            `${path} SecretRef could not be resolved; using ${resolution.fallbackEnvVar ?? "env fallback"}. ` +
-            (resolution.unresolvedRefReason ?? "").trim(),
+            `${path} SecretRef could not be resolved; using ${sanitizedFallbackEnvVar}. ` +
+            sanitizedUnresolvedRefReason.trim(),
           path,
         };
         params.diagnostics.push(diagnostic);
@@ -329,7 +340,7 @@ export async function resolveRuntimeWebProviderSelection<
         unresolvedWithoutFallback.push({
           provider: provider.id,
           path,
-          reason: resolution.unresolvedRefReason,
+          reason: String(resolution.unresolvedRefReason).replace(/[<>"'&]/g, ""),
         });
       }
 
@@ -368,9 +379,10 @@ export async function resolveRuntimeWebProviderSelection<
     }
 
     const failUnresolvedNoFallback = (unresolved: { path: string; reason: string }) => {
+      const sanitizedReason = String(unresolved.reason).replace(/[<>"'&]/g, "");
       const diagnostic: RuntimeWebDiagnostic = {
         code: params.noFallbackCode,
-        message: unresolved.reason,
+        message: sanitizedReason,
         path: unresolved.path,
       };
       params.diagnostics.push(diagnostic);
@@ -378,9 +390,9 @@ export async function resolveRuntimeWebProviderSelection<
       pushWarning(params.context, {
         code: params.noFallbackCode,
         path: unresolved.path,
-        message: unresolved.reason,
+        message: sanitizedReason,
       });
-      throw new Error(`[${params.noFallbackCode}] ${unresolved.reason}`);
+      throw new Error(`[${params.noFallbackCode}] Secret reference could not be resolved.`);
     };
 
     if (params.configuredProvider) {
@@ -397,10 +409,11 @@ export async function resolveRuntimeWebProviderSelection<
         const selectedProviderEntry = params.providers.find(
           (entry) => entry.id === selectedProvider,
         );
+        const sanitizedSelectedProvider = String(selectedProvider).replace(/[^\w\-_.]/g, "");
         const selectedDetails =
           selectedProviderEntry?.requiresCredential === false
-            ? `${params.scopePath} auto-detected keyless provider "${selectedProvider}" as the default fallback.`
-            : `${params.scopePath} auto-detected provider "${selectedProvider}" from available credentials.`;
+            ? `${params.scopePath} auto-detected keyless provider "${sanitizedSelectedProvider}" as the default fallback.`
+            : `${params.scopePath} auto-detected provider "${sanitizedSelectedProvider}" from available credentials.`;
         const diagnostic: RuntimeWebDiagnostic = {
           code: params.autoDetectSelectedCode,
           message: selectedDetails,
@@ -443,10 +456,11 @@ export async function resolveRuntimeWebProviderSelection<
         continue;
       }
       for (const path of params.inactivePathsForProvider(provider)) {
+        const sanitizedSelectedProvider = String(params.metadata.selectedProvider).replace(/[^\w\-_.]/g, "");
         pushInactiveSurfaceWarning({
           context: params.context,
           path,
-          details: `${params.scopePath} auto-detected provider is "${params.metadata.selectedProvider}".`,
+          details: `${params.scopePath} auto-detected provider is "${sanitizedSelectedProvider}".`,
         });
       }
     }
@@ -484,10 +498,11 @@ export async function resolveRuntimeWebProviderSelection<
         continue;
       }
       for (const path of params.inactivePathsForProvider(provider)) {
+        const sanitizedConfiguredProvider = String(params.configuredProvider).replace(/[^\w\-_.]/g, "");
         pushInactiveSurfaceWarning({
           context: params.context,
           path,
-          details: `${params.scopePath}.provider is "${params.configuredProvider}".`,
+          details: `${params.scopePath}.provider is "${sanitizedConfiguredProvider}".`,
         });
       }
     }
