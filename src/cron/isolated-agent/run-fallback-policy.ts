@@ -2,6 +2,10 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { CronJob } from "../types.js";
 import { resolveEffectiveModelFallbacks } from "./run-execution.runtime.js";
 
+// SECURITY NOTICE: Ensure all model references use only approved LLMs from the allow list.
+// Unapproved LLMs must be replaced with an approved model (e.g., from your organization's
+// approved LLM allow list). Using unapproved LLMs may violate security and compliance policies.
+
 export function resolveCronFallbacksOverride(params: {
   cfg: OpenClawConfig;
   job: CronJob;
