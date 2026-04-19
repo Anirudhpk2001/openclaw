@@ -30,6 +30,10 @@ function sanitizeSkillDirName(name: string, used: Set<string>): string {
   return candidate;
 }
 
+async function resolveRealPath(filePath: string): Promise<string> {
+  return fs.realpath(filePath);
+}
+
 async function collectClaudePluginSkills(snapshot?: SkillSnapshot): Promise<MaterializedSkill[]> {
   const skills = snapshot?.resolvedSkills ?? [];
   if (skills.length === 0) {
@@ -44,33 +48,56 @@ async function collectClaudePluginSkills(snapshot?: SkillSnapshot): Promise<Mate
     if (!name || !skillFilePath) {
       continue;
     }
+
+    let resolvedFilePath: string;
     try {
-      await fs.access(skillFilePath);
+      resolvedFilePath = await resolveRealPath(skillFilePath);
     } catch {
       cliBackendLog.warn(`claude skill plugin skipped missing skill file: ${skillFilePath}`);
       continue;
     }
+
+    let resolvedSourceDir: string;
+    try {
+      resolvedSourceDir = await resolveRealPath(path.dirname(resolvedFilePath));
+    } catch {
+      cliBackendLog.warn(`claude skill plugin skipped unresolvable skill dir for: ${skillFilePath}`);
+      continue;
+    }
+
+    try {
+      await fs.access(resolvedFilePath);
+    } catch {
+      cliBackendLog.warn(`claude skill plugin skipped missing skill file: ${skillFilePath}`);
+      continue;
+    }
+
     materialized.push({
       name,
-      sourceDir: path.dirname(skillFilePath),
+      sourceDir: resolvedSourceDir,
       targetDirName: sanitizeSkillDirName(name, usedTargetNames),
     });
   }
   return materialized;
 }
 
-async function linkOrCopySkillDir(params: { sourceDir: string; targetDir: string }) {
+async function linkOrCopySkillDir(params: { sourceDir: string; targetDir: string; skillsDir: string }) {
+  const resolvedTarget = path.resolve(params.skillsDir, path.basename(params.targetDir));
+  if (!resolvedTarget.startsWith(params.skillsDir + path.sep) && resolvedTarget !== params.skillsDir) {
+    throw new Error(`Path traversal detected: target dir ${params.targetDir} escapes skills directory`);
+  }
+
   try {
     await fs.symlink(
       params.sourceDir,
-      params.targetDir,
+      resolvedTarget,
       process.platform === "win32" ? "junction" : "dir",
     );
   } catch {
-    await fs.cp(params.sourceDir, params.targetDir, {
+    await fs.cp(params.sourceDir, resolvedTarget, {
       recursive: true,
       force: true,
-      verbatimSymlinks: true,
+      verbatimSymlinks: false,
     });
   }
 }
@@ -88,10 +115,16 @@ export async function prepareClaudeCliSkillsPlugin(params: {
     return { args: [], cleanup: async () => {} };
   }
 
+  const baseTmpDir = resolvePreferredOpenClawTmpDir();
+  const resolvedBaseTmpDir = await fs.realpath(baseTmpDir).catch(() => baseTmpDir);
+
   const tempDir = await fs.mkdtemp(
-    path.join(resolvePreferredOpenClawTmpDir(), "openclaw-claude-skills-"),
+    path.join(resolvedBaseTmpDir, "openclaw-claude-skills-"),
   );
-  const pluginDir = path.join(tempDir, OPENCLAW_CLAUDE_PLUGIN_NAME);
+
+  const resolvedTempDir = await fs.realpath(tempDir);
+
+  const pluginDir = path.join(resolvedTempDir, OPENCLAW_CLAUDE_PLUGIN_NAME);
   const manifestDir = path.join(pluginDir, ".claude-plugin");
   const skillsDir = path.join(pluginDir, "skills");
   await fs.mkdir(manifestDir, { recursive: true, mode: 0o700 });
@@ -114,10 +147,20 @@ export async function prepareClaudeCliSkillsPlugin(params: {
 
   let linkedSkillCount = 0;
   for (const skill of skills) {
+    const targetDir = path.join(skillsDir, skill.targetDirName);
+    const resolvedTargetDir = path.resolve(targetDir);
+    if (!resolvedTargetDir.startsWith(skillsDir + path.sep)) {
+      cliBackendLog.warn(
+        `claude skill plugin skipped ${skill.name}: path traversal detected`,
+      );
+      continue;
+    }
+
     try {
       await linkOrCopySkillDir({
         sourceDir: skill.sourceDir,
-        targetDir: path.join(skillsDir, skill.targetDirName),
+        targetDir: resolvedTargetDir,
+        skillsDir,
       });
       linkedSkillCount += 1;
     } catch (error) {
@@ -128,7 +171,7 @@ export async function prepareClaudeCliSkillsPlugin(params: {
   }
 
   if (linkedSkillCount === 0) {
-    await fs.rm(tempDir, { recursive: true, force: true });
+    await fs.rm(resolvedTempDir, { recursive: true, force: true });
     return { args: [], cleanup: async () => {} };
   }
 
@@ -136,7 +179,7 @@ export async function prepareClaudeCliSkillsPlugin(params: {
     args: ["--plugin-dir", pluginDir],
     pluginDir,
     cleanup: async () => {
-      await fs.rm(tempDir, { recursive: true, force: true });
+      await fs.rm(resolvedTempDir, { recursive: true, force: true });
     },
   };
 }
