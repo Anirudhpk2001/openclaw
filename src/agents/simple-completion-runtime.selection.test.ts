@@ -6,7 +6,7 @@ describe("resolveSimpleCompletionSelectionForAgent", () => {
   it("preserves multi-segment model ids (openrouter provider models)", () => {
     const cfg = {
       agents: {
-        defaults: { model: "openrouter/anthropic/claude-sonnet-4-6" },
+        defaults: { model: "openrouter/anthropic/claude-sonnet-4-5" },
       },
     } as OpenClawConfig;
 
@@ -14,7 +14,7 @@ describe("resolveSimpleCompletionSelectionForAgent", () => {
     expect(selection).toEqual(
       expect.objectContaining({
         provider: "openrouter",
-        modelId: "anthropic/claude-sonnet-4-6",
+        modelId: "anthropic/claude-sonnet-4-5",
       }),
     );
   });
@@ -22,7 +22,7 @@ describe("resolveSimpleCompletionSelectionForAgent", () => {
   it("uses the routed agent model override when present", () => {
     const cfg = {
       agents: {
-        defaults: { model: "anthropic/claude-opus-4-6" },
+        defaults: { model: "anthropic/claude-opus-4-5" },
         list: [{ id: "ops", model: "openrouter/aurora-alpha" }],
       },
     } as OpenClawConfig;
@@ -39,7 +39,7 @@ describe("resolveSimpleCompletionSelectionForAgent", () => {
   it("keeps trailing auth profile for credential lookup", () => {
     const cfg = {
       agents: {
-        defaults: { model: "anthropic/claude-opus-4-6@work" },
+        defaults: { model: "anthropic/claude-opus-4-5@work" },
       },
     } as OpenClawConfig;
 
@@ -47,7 +47,7 @@ describe("resolveSimpleCompletionSelectionForAgent", () => {
     expect(selection).toEqual(
       expect.objectContaining({
         provider: "anthropic",
-        modelId: "claude-opus-4-6",
+        modelId: "claude-opus-4-5",
         profileId: "work",
       }),
     );
@@ -59,7 +59,7 @@ describe("resolveSimpleCompletionSelectionForAgent", () => {
         defaults: {
           model: "fast@work",
           models: {
-            "openrouter/anthropic/claude-sonnet-4-6": { alias: "fast" },
+            "openrouter/anthropic/claude-sonnet-4-5": { alias: "fast" },
           },
         },
       },
@@ -69,7 +69,7 @@ describe("resolveSimpleCompletionSelectionForAgent", () => {
     expect(selection).toEqual(
       expect.objectContaining({
         provider: "openrouter",
-        modelId: "anthropic/claude-sonnet-4-6",
+        modelId: "anthropic/claude-sonnet-4-5",
         profileId: "work",
       }),
     );
@@ -82,7 +82,7 @@ describe("resolveSimpleCompletionSelectionForAgent", () => {
     expect(selection).toEqual(
       expect.objectContaining({
         provider: "openai",
-        modelId: "gpt-5.4",
+        modelId: "gpt-4o",
       }),
     );
   });
@@ -95,8 +95,8 @@ describe("resolveSimpleCompletionSelectionForAgent", () => {
             baseUrl: "https://api.openai.com/v1",
             models: [
               {
-                id: "gpt-5",
-                name: "GPT-5",
+                id: "gpt-4o",
+                name: "GPT-4o",
                 reasoning: false,
                 input: ["text"],
                 cost: {
@@ -118,7 +118,7 @@ describe("resolveSimpleCompletionSelectionForAgent", () => {
     expect(selection).toEqual(
       expect.objectContaining({
         provider: "openai",
-        modelId: "gpt-5.4",
+        modelId: "gpt-4o",
       }),
     );
   });
