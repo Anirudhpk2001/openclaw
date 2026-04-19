@@ -26,6 +26,10 @@ type SlackConfigLike = {
   accounts?: Record<string, SlackAccountLike | undefined>;
 };
 
+function sanitizeAccountId(accountId: string): string {
+  return accountId.replace(/[^a-zA-Z0-9_\-]/g, "");
+}
+
 function forEachEnabledAccount<T extends { enabled?: unknown }>(
   accounts: Record<string, T | undefined> | undefined,
   run: (accountId: string, account: T) => void,
@@ -37,7 +41,8 @@ function forEachEnabledAccount<T extends { enabled?: unknown }>(
     if (!account || account.enabled === false) {
       continue;
     }
-    run(accountId, account);
+    const safeAccountId = sanitizeAccountId(accountId);
+    run(safeAccountId, account);
   }
 }
 
