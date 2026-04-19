@@ -26,19 +26,19 @@ describe("saveAuthProfileStore", () => {
           "openai:default": {
             type: "api_key",
             provider: "openai",
-            key: "sk-runtime-value",
+            key: process.env.TEST_OPENAI_API_KEY ?? "sk-runtime-value",
             keyRef: { source: "env", provider: "default", id: "OPENAI_API_KEY" },
           },
           "github-copilot:default": {
             type: "token",
             provider: "github-copilot",
-            token: "gh-runtime-token",
+            token: process.env.TEST_GITHUB_TOKEN ?? "gh-runtime-token",
             tokenRef: { source: "env", provider: "default", id: "GITHUB_TOKEN" },
           },
           "anthropic:default": {
             type: "api_key",
             provider: "anthropic",
-            key: "sk-anthropic-plain",
+            key: process.env.TEST_ANTHROPIC_API_KEY ?? "sk-anthropic-plain",
           },
         },
       };
@@ -66,7 +66,7 @@ describe("saveAuthProfileStore", () => {
         id: "GITHUB_TOKEN",
       });
 
-      expect(parsed.profiles["anthropic:default"]?.key).toBe("sk-anthropic-plain");
+      expect(parsed.profiles["anthropic:default"]?.key).toBe(process.env.TEST_ANTHROPIC_API_KEY ?? "sk-anthropic-plain");
     } finally {
       await fs.rm(agentDir, { recursive: true, force: true });
     }
@@ -84,8 +84,8 @@ describe("saveAuthProfileStore", () => {
               "anthropic:default": {
                 type: "oauth",
                 provider: "anthropic",
-                access: "access-1",
-                refresh: "refresh-1",
+                access: process.env.TEST_OAUTH_ACCESS_TOKEN_1 ?? "access-1",
+                refresh: process.env.TEST_OAUTH_REFRESH_TOKEN_1 ?? "refresh-1",
                 expires: 1,
               },
             },
@@ -94,8 +94,8 @@ describe("saveAuthProfileStore", () => {
       ]);
 
       expect(ensureAuthProfileStore(agentDir).profiles["anthropic:default"]).toMatchObject({
-        access: "access-1",
-        refresh: "refresh-1",
+        access: process.env.TEST_OAUTH_ACCESS_TOKEN_1 ?? "access-1",
+        refresh: process.env.TEST_OAUTH_REFRESH_TOKEN_1 ?? "refresh-1",
       });
 
       const rotatedStore: AuthProfileStore = {
@@ -104,8 +104,8 @@ describe("saveAuthProfileStore", () => {
           "anthropic:default": {
             type: "oauth",
             provider: "anthropic",
-            access: "access-2",
-            refresh: "refresh-2",
+            access: process.env.TEST_OAUTH_ACCESS_TOKEN_2 ?? "access-2",
+            refresh: process.env.TEST_OAUTH_REFRESH_TOKEN_2 ?? "refresh-2",
             expires: 2,
           },
         },
@@ -114,16 +114,16 @@ describe("saveAuthProfileStore", () => {
       saveAuthProfileStore(rotatedStore, agentDir);
 
       expect(ensureAuthProfileStore(agentDir).profiles["anthropic:default"]).toMatchObject({
-        access: "access-2",
-        refresh: "refresh-2",
+        access: process.env.TEST_OAUTH_ACCESS_TOKEN_2 ?? "access-2",
+        refresh: process.env.TEST_OAUTH_REFRESH_TOKEN_2 ?? "refresh-2",
       });
 
       const persisted = JSON.parse(await fs.readFile(resolveAuthStorePath(agentDir), "utf8")) as {
         profiles: Record<string, { access?: string; refresh?: string }>;
       };
       expect(persisted.profiles["anthropic:default"]).toMatchObject({
-        access: "access-2",
-        refresh: "refresh-2",
+        access: process.env.TEST_OAUTH_ACCESS_TOKEN_2 ?? "access-2",
+        refresh: process.env.TEST_OAUTH_REFRESH_TOKEN_2 ?? "refresh-2",
       });
     } finally {
       clearRuntimeAuthProfileStoreSnapshots();
@@ -140,7 +140,7 @@ describe("saveAuthProfileStore", () => {
           "anthropic:default": {
             type: "api_key",
             provider: "anthropic",
-            key: "sk-anthropic-plain",
+            key: process.env.TEST_ANTHROPIC_API_KEY ?? "sk-anthropic-plain",
           },
         },
         order: {
