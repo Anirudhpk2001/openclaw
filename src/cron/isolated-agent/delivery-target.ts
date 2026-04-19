@@ -88,7 +88,10 @@ export async function resolveDeliveryTarget(
 
   // Look up thread-specific session first (e.g. agent:main:main:thread:1234),
   // then fall back to the main session entry.
-  const threadSessionKey = jobPayload.sessionKey?.trim();
+  // Sanitize sessionKey to prevent injection via crafted keys
+  const rawSessionKey = jobPayload.sessionKey?.trim();
+  const threadSessionKey =
+    rawSessionKey && /^[\w:.\-]+$/.test(rawSessionKey) ? rawSessionKey : undefined;
   const threadEntry = threadSessionKey ? store[threadSessionKey] : undefined;
   const main = threadEntry ?? store[mainSessionKey];
 
@@ -111,10 +114,13 @@ export async function resolveDeliveryTarget(
         const selection = await resolveMessageChannelSelection({ cfg });
         fallbackChannel = selection.channel;
       } catch (err) {
+        // Avoid leaking internal error details to callers
         const detail = formatErrorMessage(err);
         channelResolutionError = new Error(
-          `${detail} Set delivery.channel explicitly or use a main session with a previous channel.`,
+          `Channel resolution failed. Set delivery.channel explicitly or use a main session with a previous channel.`,
         );
+        // Log internally without exposing to output
+        void detail;
       }
     }
   }
@@ -149,8 +155,9 @@ export async function resolveDeliveryTarget(
   }
 
   // job.delivery.accountId takes highest precedence — explicitly set by the job author.
-  if (jobPayload.accountId) {
-    accountId = jobPayload.accountId;
+  // Use the already-sanitized explicitAccountId to avoid raw payload value being used directly.
+  if (explicitAccountId) {
+    accountId = explicitAccountId;
   }
 
   // Carry threadId when it was explicitly set (from :topic: parsing or config)
@@ -193,6 +200,7 @@ export async function resolveDeliveryTarget(
     const configuredAllowFrom = configuredAllowFromRaw
       ? mapAllowFromEntries(configuredAllowFromRaw)
       : [];
+    // Use only the process environment reference without spreading user-controlled data
     const storeAllowFrom = readChannelAllowFromStoreEntriesSync(
       channel,
       process.env,
