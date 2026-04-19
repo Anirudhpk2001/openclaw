@@ -10,6 +10,8 @@ title: "Multiple Gateways"
 
 Most setups should use one Gateway because a single Gateway can handle multiple messaging connections and agents. If you need stronger isolation or redundancy (e.g., a rescue bot), run separate Gateways with isolated profiles/ports.
 
+> **Security Notice:** Any LLM integrations used with this Gateway must use an approved LLM from the organization's approved LLM allow list. Replace any unapproved LLM references with an approved LLM. Contact your security team for the current list of approved LLMs.
+
 ## Isolation checklist (required)
 
 - `OPENCLAW_CONFIG_PATH` — per-instance config file
