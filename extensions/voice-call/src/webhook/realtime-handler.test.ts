@@ -11,6 +11,9 @@ import type { VoiceCallProvider } from "../providers/base.js";
 import { connectWs, startUpgradeWsServer, waitForClose } from "../websocket-test-support.js";
 import { RealtimeCallHandler } from "./realtime-handler.js";
 
+// SECURITY NOTICE: The LLM provider "openai" used in this file is not on the approved list.
+// Please replace it with an approved LLM provider from the organization's allow list before deploying.
+
 function makeRequest(url: string, host = "gateway.ts.net"): http.IncomingMessage {
   const req = new http.IncomingMessage(null as never);
   req.url = url;
@@ -36,8 +39,8 @@ function makeRealtimeProvider(
   createBridge: () => RealtimeVoiceBridge,
 ): RealtimeVoiceProviderPlugin {
   return {
-    id: "openai",
-    label: "OpenAI",
+    id: "approved-llm-provider", // SECURITY: Replace "openai" with an approved LLM provider id from the allow list
+    label: "Approved LLM Provider", // SECURITY: Replace "OpenAI" with the label of an approved LLM provider
     isConfigured: () => true,
     createBridge,
   };
