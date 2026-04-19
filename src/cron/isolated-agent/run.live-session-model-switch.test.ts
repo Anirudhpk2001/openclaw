@@ -29,8 +29,8 @@ function makeJob(overrides?: Record<string, unknown>) {
     payload: {
       kind: "agentTurn",
       message: "run task",
-      // Cron requests sonnet; agent primary is opus
-      model: "anthropic/claude-sonnet-4-6",
+      // Cron requests an approved model; agent primary is also an approved model
+      model: "anthropic/claude-3-5-sonnet",
     },
     ...overrides,
   } as never;
@@ -47,7 +47,7 @@ function makeParams(overrides?: Record<string, unknown>) {
   };
 }
 
-function makeSuccessfulRunResult(modelUsed = "claude-sonnet-4-6") {
+function makeSuccessfulRunResult(modelUsed = "claude-3-5-sonnet") {
   return {
     result: {
       payloads: [{ text: "task complete" }],
@@ -76,7 +76,7 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
 
     resolveConfiguredModelRefMock.mockReturnValue({
       provider: "anthropic",
-      model: "claude-opus-4-6",
+      model: "claude-3-opus",
     });
     resolveAllowedModelRefMock.mockImplementation(({ raw }: { raw: string }) => {
       const [provider, model] = raw.split("/");
@@ -106,7 +106,7 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
   it("retries with the requested model when runWithModelFallback throws LiveSessionModelSwitchError on the first attempt", async () => {
     const switchError = new LiveSessionModelSwitchError({
       provider: "anthropic",
-      model: "claude-sonnet-4-6",
+      model: "claude-3-5-sonnet",
     });
 
     let callCount = 0;
@@ -123,8 +123,8 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
         }
         // Second attempt: should now be called with sonnet
         expect(params.provider).toBe("anthropic");
-        expect(params.model).toBe("claude-sonnet-4-6");
-        return makeSuccessfulRunResult("claude-sonnet-4-6");
+        expect(params.model).toBe("claude-3-5-sonnet");
+        return makeSuccessfulRunResult("claude-3-5-sonnet");
       },
     );
 
@@ -145,7 +145,7 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
     resolveCronSessionMock.mockReturnValue(cronSession);
     const switchError = new LiveSessionModelSwitchError({
       provider: "anthropic",
-      model: "claude-sonnet-4-6",
+      model: "claude-3-5-sonnet",
     });
 
     runWithModelFallbackMock.mockImplementation(async () => {
@@ -161,7 +161,7 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
     expect(String(result.error)).toContain("transient network error");
     expect(updateSessionStoreMock).toHaveBeenCalled();
     expect(cronSession.sessionEntry).toMatchObject({
-      model: "claude-sonnet-4-6",
+      model: "claude-3-5-sonnet",
       modelProvider: "anthropic",
     });
   });
@@ -189,7 +189,7 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
       .mockRejectedValueOnce(
         new LiveSessionModelSwitchError({
           provider: "anthropic",
-          model: "claude-sonnet-4-6",
+          model: "claude-3-5-sonnet",
           authProfileId: "profile-b",
           authProfileIdSource: "user",
         }),
@@ -199,7 +199,7 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
         meta: {
           agentMeta: {
             provider: "anthropic",
-            model: "claude-sonnet-4-6",
+            model: "claude-3-5-sonnet",
             usage: { input: 100, output: 50 },
           },
         },
@@ -211,7 +211,7 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
     expect(runEmbeddedPiAgentMock).toHaveBeenCalledTimes(2);
     expect(runEmbeddedPiAgentMock.mock.calls[1]?.[0]).toMatchObject({
       provider: "anthropic",
-      model: "claude-sonnet-4-6",
+      model: "claude-3-5-sonnet",
       authProfileId: "profile-b",
       authProfileIdSource: "user",
     });
@@ -228,7 +228,7 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
     // a different error on the second attempt to ensure the outer catch still works.
     const switchError = new LiveSessionModelSwitchError({
       provider: "anthropic",
-      model: "claude-sonnet-4-6",
+      model: "claude-3-5-sonnet",
     });
 
     let callCount = 0;
@@ -252,7 +252,7 @@ describe("runCronIsolatedAgentTurn — LiveSessionModelSwitchError retry (#57206
   it("aborts after exceeding LiveSessionModelSwitchError retry limit (#58466)", async () => {
     const switchError = new LiveSessionModelSwitchError({
       provider: "anthropic",
-      model: "claude-sonnet-4-6",
+      model: "claude-3-5-sonnet",
     });
 
     let callCount = 0;
