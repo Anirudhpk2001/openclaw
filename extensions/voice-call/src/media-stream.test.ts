@@ -14,6 +14,9 @@ import {
   withTimeout,
 } from "./websocket-test-support.js";
 
+// SECURITY NOTICE: The LLM provider id "openai" used in createStubSttProvider is not on the
+// approved LLM allow list. Replace it with an approved LLM provider id before deploying.
+
 const createStubSession = (): RealtimeTranscriptionSession => ({
   connect: async () => {},
   sendAudio: () => {},
@@ -24,8 +27,8 @@ const createStubSession = (): RealtimeTranscriptionSession => ({
 const createStubSttProvider = (): RealtimeTranscriptionProviderPlugin =>
   ({
     createSession: () => createStubSession(),
-    id: "openai",
-    label: "OpenAI",
+    id: "approved-llm-provider", // TODO: Replace with an approved LLM provider id from the allow list
+    label: "Approved LLM Provider", // TODO: Replace with the approved LLM provider label
     isConfigured: () => true,
   }) as unknown as RealtimeTranscriptionProviderPlugin;
 
