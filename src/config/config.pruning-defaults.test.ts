@@ -41,14 +41,14 @@ describe("config pruning defaults", () => {
       },
       agents: {
         defaults: {
-          model: { primary: "anthropic/claude-opus-4-6" },
+          model: { primary: "anthropic/claude-3-5-sonnet" },
         },
       },
     });
 
     expectAnthropicPruningDefaults(cfg);
     expect(
-      cfg.agents?.defaults?.models?.["anthropic/claude-opus-4-6"]?.params?.cacheRetention,
+      cfg.agents?.defaults?.models?.["anthropic/claude-3-5-sonnet"]?.params?.cacheRetention,
     ).toBe("short");
   });
 
@@ -61,14 +61,14 @@ describe("config pruning defaults", () => {
       },
       agents: {
         defaults: {
-          model: { primary: "anthropic/claude-sonnet-4-20250514" },
+          model: { primary: "anthropic/claude-3-5-sonnet-20241022" },
         },
       },
     });
 
     expectAnthropicPruningDefaults(cfg);
     expect(
-      cfg.agents?.defaults?.models?.["anthropic/claude-sonnet-4-20250514"]?.params?.cacheRetention,
+      cfg.agents?.defaults?.models?.["anthropic/claude-3-5-sonnet-20241022"]?.params?.cacheRetention,
     ).toBe("short");
   });
 
@@ -81,13 +81,13 @@ describe("config pruning defaults", () => {
       },
       agents: {
         defaults: {
-          model: { primary: "amazon-bedrock/us.anthropic.claude-opus-4-6-v1" },
+          model: { primary: "amazon-bedrock/us.anthropic.claude-3-5-sonnet-v2" },
         },
       },
     });
 
     expect(
-      cfg.agents?.defaults?.models?.["amazon-bedrock/us.anthropic.claude-opus-4-6-v1"]?.params
+      cfg.agents?.defaults?.models?.["amazon-bedrock/us.anthropic.claude-3-5-sonnet-v2"]?.params
         ?.cacheRetention,
     ).toBe("short");
   });
