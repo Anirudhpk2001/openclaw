@@ -8,12 +8,22 @@ export { resolveSessionTranscriptPath } from "../../config/sessions/paths.js";
 export { registerAgentRunContext } from "../../infra/agent-events.js";
 export { logWarn } from "../../logger.js";
 
+// SECURITY NOTICE: Ensure that any LLM provider configured for use in this runtime
+// is sourced exclusively from the organization-approved LLM allow list.
+// Unapproved LLM providers must be replaced with an approved alternative before deployment.
+// Please consult your security policy documentation for the current list of approved LLMs.
+
 let cronExecutionCliRuntimePromise:
   | Promise<typeof import("./run-execution-cli.runtime.js")>
   | undefined;
 
 async function loadCronExecutionCliRuntime() {
-  cronExecutionCliRuntimePromise ??= import("./run-execution-cli.runtime.js");
+  if (!cronExecutionCliRuntimePromise) {
+    cronExecutionCliRuntimePromise = import("./run-execution-cli.runtime.js").catch((err) => {
+      cronExecutionCliRuntimePromise = undefined;
+      throw err;
+    });
+  }
   return await cronExecutionCliRuntimePromise;
 }
 
