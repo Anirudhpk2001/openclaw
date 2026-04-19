@@ -195,7 +195,7 @@ export async function noteSecurityWarnings(cfg: OpenClawConfig) {
     : undefined;
   const resolvedBindHost = bindMode
     ? await resolveGatewayBindHost(bindMode, customBindHost)
-    : "0.0.0.0";
+    : "127.0.0.1";
   const isExposed = !isLoopbackHost(resolvedBindHost);
 
   const resolvedAuth = resolveGatewayAuth({
@@ -214,6 +214,20 @@ export async function noteSecurityWarnings(cfg: OpenClawConfig) {
   const hasSharedSecret =
     (resolvedAuth.mode === "token" && hasToken) ||
     (resolvedAuth.mode === "password" && hasPassword);
+
+  // Validate auth credential strength: warn if token or password is too short
+  const MIN_CREDENTIAL_LENGTH = 16;
+  if (hasToken && authToken.length > 0 && authToken.length < MIN_CREDENTIAL_LENGTH) {
+    warnings.push(
+      `- WARNING: Gateway auth token appears too short (< ${MIN_CREDENTIAL_LENGTH} characters). Use a strong, randomly generated token.`,
+    );
+  }
+  if (hasPassword && authPassword.length > 0 && authPassword.length < MIN_CREDENTIAL_LENGTH) {
+    warnings.push(
+      `- WARNING: Gateway auth password appears too short (< ${MIN_CREDENTIAL_LENGTH} characters). Use a strong password.`,
+    );
+  }
+
   const bindDescriptor = `"${gatewayBind}" (${resolvedBindHost})`;
   const saferRemoteAccessLines = [
     "  Safer remote access: keep bind loopback and use Tailscale Serve/Funnel or an SSH tunnel.",
