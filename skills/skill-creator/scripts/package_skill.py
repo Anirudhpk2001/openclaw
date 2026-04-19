@@ -40,33 +40,44 @@ def package_skill(skill_path, output_dir=None):
 
     # Validate skill folder exists
     if not skill_path.exists():
-        print(f"[ERROR] Skill folder not found: {skill_path}")
+        print("[ERROR] Skill folder not found.")
         return None
 
     if not skill_path.is_dir():
-        print(f"[ERROR] Path is not a directory: {skill_path}")
+        print("[ERROR] Path is not a directory.")
         return None
 
     # Validate SKILL.md exists
     skill_md = skill_path / "SKILL.md"
     if not skill_md.exists():
-        print(f"[ERROR] SKILL.md not found in {skill_path}")
+        print(f"[ERROR] SKILL.md not found in skill folder.")
         return None
 
     # Run validation before packaging
     print("Validating skill...")
     valid, message = validate_skill(skill_path)
     if not valid:
-        print(f"[ERROR] Validation failed: {message}")
+        print(f"[ERROR] Validation failed.")
         print("   Please fix the validation errors before packaging.")
         return None
-    print(f"[OK] {message}\n")
+    print(f"[OK] Validation passed.\n")
 
     # Determine output location
     skill_name = skill_path.name
+
+    # Validate skill_name to prevent path traversal via skill folder name
+    if not skill_name or skill_name in (".", "..") or "/" in skill_name or "\\" in skill_name:
+        print("[ERROR] Invalid skill folder name.")
+        return None
+
     if output_dir:
         output_path = Path(output_dir).resolve()
-        output_path.mkdir(parents=True, exist_ok=True)
+        # Ensure output_dir does not escape to unexpected locations via traversal
+        try:
+            output_path.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            print("[ERROR] Failed to create output directory.")
+            return None
     else:
         output_path = Path.cwd()
 
@@ -81,7 +92,7 @@ def package_skill(skill_path, output_dir=None):
             for file_path in skill_path.rglob("*"):
                 # Security: never follow or package symlinks.
                 if file_path.is_symlink():
-                    print(f"[WARN] Skipping symlink: {file_path}")
+                    print(f"[WARN] Skipping symlink.")
                     continue
 
                 rel_parts = file_path.relative_to(skill_path).parts
@@ -91,23 +102,32 @@ def package_skill(skill_path, output_dir=None):
                 if file_path.is_file():
                     resolved_file = file_path.resolve()
                     if not _is_within(resolved_file, skill_path):
-                        print(f"[ERROR] File escapes skill root: {file_path}")
+                        print(f"[ERROR] File escapes skill root.")
                         return None
                     # If output lives under skill_path, avoid writing archive into itself.
                     if resolved_file == skill_filename.resolve():
-                        print(f"[WARN] Skipping output archive: {file_path}")
+                        print(f"[WARN] Skipping output archive.")
                         continue
 
                     # Calculate the relative path within the zip.
-                    arcname = Path(skill_name) / file_path.relative_to(skill_path)
+                    # Sanitize each path component to prevent zip slip attacks.
+                    rel = file_path.relative_to(skill_path)
+                    sanitized_parts = []
+                    for part in rel.parts:
+                        if part in (".", "..") or "/" in part or "\\" in part:
+                            print(f"[ERROR] Invalid path component detected.")
+                            return None
+                        sanitized_parts.append(part)
+
+                    arcname = Path(skill_name).joinpath(*sanitized_parts)
                     zipf.write(file_path, arcname)
                     print(f"  Added: {arcname}")
 
-        print(f"\n[OK] Successfully packaged skill to: {skill_filename}")
+        print(f"\n[OK] Successfully packaged skill.")
         return skill_filename
 
     except Exception as e:
-        print(f"[ERROR] Error creating .skill file: {e}")
+        print(f"[ERROR] Error creating .skill file.")
         return None
 
 
@@ -122,9 +142,9 @@ def main():
     skill_path = sys.argv[1]
     output_dir = sys.argv[2] if len(sys.argv) > 2 else None
 
-    print(f"Packaging skill: {skill_path}")
+    print(f"Packaging skill.")
     if output_dir:
-        print(f"   Output directory: {output_dir}")
+        print(f"   Output directory specified.")
     print()
 
     result = package_skill(skill_path, output_dir)
