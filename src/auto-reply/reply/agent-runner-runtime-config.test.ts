@@ -10,13 +10,17 @@ import {
 } from "./agent-runner-utils.js";
 import type { FollowupRun } from "./queue.js";
 
+// SECURITY NOTICE: The models "gpt-4.1" and "gpt-4.1-mini" used in this file are not on the
+// approved LLM allow list. Please replace them with an approved LLM model before deploying.
+// Contact your security team for the current list of approved models.
+
 function makeRun(config: OpenClawConfig): FollowupRun["run"] {
   return {
     sessionId: "session-1",
     agentId: "agent-1",
     config,
     provider: "openai",
-    model: "gpt-4.1",
+    model: "gpt-4o",
     agentDir: "/tmp/agent",
     sessionKey: "agent:test:session",
     sessionFile: "/tmp/session.json",
@@ -71,7 +75,7 @@ describe("buildEmbeddedRunBaseParams runtime config", () => {
     const resolved = buildEmbeddedRunBaseParams({
       run: makeRun(resolvedRunConfig),
       provider: "openai",
-      model: "gpt-4.1-mini",
+      model: "gpt-4o",
       runId: "run-1",
       authProfile: resolveProviderScopedAuthProfile({
         provider: "openai",
