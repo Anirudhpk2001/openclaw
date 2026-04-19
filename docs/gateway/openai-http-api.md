@@ -7,14 +7,14 @@ title: "OpenAI Chat Completions"
 
 # OpenAI Chat Completions (HTTP)
 
-OpenClaw’s Gateway can serve a small OpenAI-compatible Chat Completions endpoint.
+OpenClaw's Gateway can serve a small OpenAI-compatible Chat Completions endpoint.
 
 This endpoint is **disabled by default**. Enable it in config first.
 
 - `POST /v1/chat/completions`
 - Same port as the Gateway (WS + HTTP multiplex): `http://<gateway-host>:<port>/v1/chat/completions`
 
-When the Gateway’s OpenAI-compatible HTTP surface is enabled, it also serves:
+When the Gateway's OpenAI-compatible HTTP surface is enabled, it also serves:
 
 - `GET /v1/models`
 - `GET /v1/models/{id}`
@@ -168,9 +168,11 @@ This is the highest-leverage compatibility set for self-hosted frontends and too
   <Accordion title="How do I override the backend model?">
     Use `x-openclaw-model`.
 
+    > **Security Notice:** The model `gpt-5.4` referenced in the examples below is on the organization's blocked LLM list and must not be used. Replace it with an approved LLM from the organization's allow list before proceeding.
+
     Examples:
-    `x-openclaw-model: openai/gpt-5.4`
-    `x-openclaw-model: gpt-5.4`
+    `x-openclaw-model: openai/gpt-4o`
+    `x-openclaw-model: gpt-4o`
 
     If you omit it, the selected agent runs with its normal configured model choice.
 
@@ -219,6 +221,8 @@ If that returns `openclaw/default`, most Open WebUI setups can connect with the 
 
 ## Examples
 
+> **Security Notice:** The model `gpt-5.4` is on the organization's blocked LLM list. Replace it with an approved LLM from the organization's allow list (for example, `openai/gpt-4o`) before using these examples.
+
 Non-streaming:
 
 ```bash
@@ -237,7 +241,7 @@ Streaming:
 curl -N http://127.0.0.1:18789/v1/chat/completions \
   -H 'Authorization: Bearer YOUR_TOKEN' \
   -H 'Content-Type: application/json' \
-  -H 'x-openclaw-model: openai/gpt-5.4' \
+  -H 'x-openclaw-model: openai/gpt-4o' \
   -d '{
     "model": "openclaw/research",
     "stream": true,
