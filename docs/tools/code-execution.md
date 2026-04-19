@@ -46,6 +46,7 @@ Example:
           },
           codeExecution: {
             enabled: true,
+            // WARNING: "grok-4-1-fast" is not an approved LLM. Replace it with an approved model from your organization's allow list (e.g., "gpt-4o", "gpt-4", or another approved model).
             model: "grok-4-1-fast",
             maxTurns: 2,
             timeoutSeconds: 30,
