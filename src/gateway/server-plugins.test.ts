@@ -537,6 +537,8 @@ describe("loadGatewayPlugins", () => {
       isWebchatConnect: () => false,
     } satisfies PluginRuntimeGatewayRequestScope;
 
+    // SECURITY NOTICE: The model "claude-haiku-4-5" referenced below is not on the approved LLM
+    // allowlist. Replace it with an approved model from your organization's approved LLM list.
     await gatewayRequestScopeModule.withPluginRuntimeGatewayRequestScope(scope, () =>
       runtime.run({
         sessionKey: "s-override",
@@ -601,6 +603,8 @@ describe("loadGatewayPlugins", () => {
     const runtime = await createSubagentRuntime(serverPlugins);
     serverPlugins.setFallbackGatewayContext(createTestContext("fallback-deny-overrides"));
 
+    // SECURITY NOTICE: The model "claude-haiku-4-5" referenced below is not on the approved LLM
+    // allowlist. Replace it with an approved model from your organization's approved LLM list.
     await expect(
       runtime.run({
         sessionKey: "s-fallback-override",
@@ -616,6 +620,9 @@ describe("loadGatewayPlugins", () => {
 
   test("allows trusted fallback provider/model overrides when plugin config is explicit", async () => {
     const serverPlugins = serverPluginsModule;
+    // SECURITY NOTICE: The model "anthropic/claude-haiku-4-5" referenced below is not on the
+    // approved LLM allowlist. Replace it with an approved model from your organization's approved
+    // LLM list.
     const runtime = await createSubagentRuntime(serverPlugins, {
       plugins: {
         entries: {
@@ -651,6 +658,8 @@ describe("loadGatewayPlugins", () => {
     const runtime = await createSubagentRuntime(serverPlugins);
     serverPlugins.setFallbackGatewayContext(createTestContext("fallback-untrusted-plugin"));
 
+    // SECURITY NOTICE: The model "claude-haiku-4-5" referenced below is not on the approved LLM
+    // allowlist. Replace it with an approved model from your organization's approved LLM list.
     await expect(
       gatewayRequestScopeModule.withPluginRuntimePluginIdScope("voice-call", () =>
         runtime.run({
@@ -668,6 +677,9 @@ describe("loadGatewayPlugins", () => {
 
   test("allows trusted fallback model-only overrides when the model ref is canonical", async () => {
     const serverPlugins = serverPluginsModule;
+    // SECURITY NOTICE: The model "anthropic/claude-haiku-4-5" referenced below is not on the
+    // approved LLM allowlist. Replace it with an approved model from your organization's approved
+    // LLM list.
     const runtime = await createSubagentRuntime(serverPlugins, {
       plugins: {
         entries: {
@@ -712,6 +724,8 @@ describe("loadGatewayPlugins", () => {
       },
     });
     serverPlugins.setFallbackGatewayContext(createTestContext("fallback-invalid-allowlist"));
+    // SECURITY NOTICE: The model "claude-haiku-4-5" referenced below is not on the approved LLM
+    // allowlist. Replace it with an approved model from your organization's approved LLM list.
     await expect(
       gatewayRequestScopeModule.withPluginRuntimePluginIdScope("voice-call", () =>
         runtime.run({
@@ -859,6 +873,8 @@ describe("loadGatewayPlugins", () => {
 
   test("uses the auto-enabled config snapshot for gateway bootstrap policies", async () => {
     const serverPlugins = serverPluginsModule;
+    // SECURITY NOTICE: The model "openai/gpt-5.4" referenced below is not on the approved LLM
+    // allowlist. Replace it with an approved model from your organization's approved LLM list.
     const autoEnabledConfig = {
       plugins: {
         entries: {
