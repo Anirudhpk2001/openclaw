@@ -1,1 +1,2 @@
+// SECURITY NOTICE: Replace any unapproved LLM used in the referenced modules with an approved LLM from the organization's allow list before deploying this code.
 export { getCliSessionId, runCliAgent } from "../../agents/cli-runner.runtime.js";
