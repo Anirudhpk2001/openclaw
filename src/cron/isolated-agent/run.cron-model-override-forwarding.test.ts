@@ -29,7 +29,7 @@ function makeJob(overrides?: Record<string, unknown>) {
     payload: {
       kind: "agentTurn",
       message: "summarize",
-      model: "google/gemini-2.0-flash",
+      model: "anthropic/claude-opus-4-6",
     },
     ...overrides,
   } as never;
@@ -46,7 +46,7 @@ function makeParams(overrides?: Record<string, unknown>) {
   };
 }
 
-function makeSuccessfulRunResult(provider = "google", model = "gemini-2.0-flash") {
+function makeSuccessfulRunResult(provider = "anthropic", model = "claude-opus-4-6") {
   return {
     result: {
       payloads: [{ text: "summary done" }],
@@ -79,10 +79,10 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
       model: "claude-opus-4-6",
     });
 
-    // Cron payload model override resolves to gemini
+    // Cron payload model override resolves to approved model
     resolveAllowedModelRefMock.mockImplementation(({ raw }: { raw: string }) => {
-      if (raw.includes("gemini")) {
-        return { ref: { provider: "google", model: "gemini-2.0-flash" } };
+      if (raw.includes("claude-opus-4-6")) {
+        return { ref: { provider: "anthropic", model: "claude-opus-4-6" } };
       }
       return { ref: { provider: "anthropic", model: "claude-opus-4-6" } };
     });
@@ -120,10 +120,10 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     const result = await runCronIsolatedAgentTurn(makeParams());
 
     expect(result.status).toBe("ok");
-    // The cron payload specifies google/gemini-2.0-flash — that must be
+    // The cron payload specifies anthropic/claude-opus-4-6 — that must be
     // what reaches runWithModelFallback, not the agent default (opus).
-    expect(capturedProvider).toBe("google");
-    expect(capturedModel).toBe("gemini-2.0-flash");
+    expect(capturedProvider).toBe("anthropic");
+    expect(capturedModel).toBe("claude-opus-4-6");
   });
 
   it("passes the cron payload model to the embedded agent runner", async () => {
@@ -143,8 +143,8 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     const embeddedCall = runEmbeddedPiAgentMock.mock.calls[0]?.[0] as
       | { provider?: string; model?: string }
       | undefined;
-    expect(embeddedCall?.provider).toBe("google");
-    expect(embeddedCall?.model).toBe("gemini-2.0-flash");
+    expect(embeddedCall?.provider).toBe("anthropic");
+    expect(embeddedCall?.model).toBe("claude-opus-4-6");
   });
 
   it("does not add agent primary model as fallback when cron payload model is set", async () => {
@@ -189,7 +189,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
               model: {
                 provider: "anthropic",
                 model: "claude-opus-4-6",
-                fallbacks: ["openai/gpt-5.4", "google/gemini-2.5-pro"],
+                fallbacks: ["anthropic/claude-sonnet-4-5", "anthropic/claude-haiku-3-5"],
               },
             },
           },
@@ -197,7 +197,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
       }),
     );
 
-    expect(capturedFallbacksOverride).toEqual(["openai/gpt-5.4", "google/gemini-2.5-pro"]);
+    expect(capturedFallbacksOverride).toEqual(["anthropic/claude-sonnet-4-5", "anthropic/claude-haiku-3-5"]);
   });
 
   it("preserves agent fallbacks when no cron payload model is set", async () => {
@@ -229,8 +229,8 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
       payload: {
         kind: "agentTurn",
         message: "summarize",
-        model: "google/gemini-2.0-flash",
-        fallbacks: ["openai/gpt-4o"],
+        model: "anthropic/claude-opus-4-6",
+        fallbacks: ["anthropic/claude-sonnet-4-5"],
       },
     });
 
@@ -244,6 +244,6 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
 
     await runCronIsolatedAgentTurn(makeParams({ job: jobWithFallbacks }));
 
-    expect(capturedFallbacksOverride).toEqual(["openai/gpt-4o"]);
+    expect(capturedFallbacksOverride).toEqual(["anthropic/claude-sonnet-4-5"]);
   });
 });
