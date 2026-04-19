@@ -129,8 +129,13 @@ describe("config doc baseline integration", () => {
       expect(current.changed).toBe(false);
 
       // Corrupt the hash file to simulate drift
+      const hashFilePath = path.resolve(tempRoot, "docs/.generated/config-baseline.sha256");
+      const resolvedTempRoot = path.resolve(tempRoot);
+      if (!hashFilePath.startsWith(resolvedTempRoot + path.sep)) {
+        throw new Error("Path traversal detected: hash file path is outside temp directory");
+      }
       await fs.writeFile(
-        path.join(tempRoot, "docs/.generated/config-baseline.sha256"),
+        hashFilePath,
         "0000000000000000000000000000000000000000000000000000000000000000  config-baseline.json\n",
         "utf8",
       );
