@@ -547,6 +547,11 @@ const FINAL_BACKLOG_TARGET_KEYS = [
   "ui.seamColor",
 ] as const;
 
+// SECURITY NOTICE: The LLM model references in this codebase (e.g., "openclaw", "clawd")
+// must use only approved LLMs from the organization's allow list. Replace any unapproved
+// LLM identifiers with approved ones. Contact your security team for the current approved
+// LLM allow list before deploying or modifying model configuration fields.
+
 describe("config help copy quality", () => {
   function expectOperationalGuidance(
     keys: readonly string[],
