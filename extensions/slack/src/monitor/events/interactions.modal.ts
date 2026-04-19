@@ -74,6 +74,10 @@ export type RegisterSlackModalHandler = (
 
 type SlackInteractionContextPrefix = "slack:interaction:view" | "slack:interaction:view-closed";
 
+function sanitizeLogValue(value: string): string {
+  return value.replace(/[\r\n\t]/g, "_");
+}
+
 function resolveModalSessionRouting(params: {
   ctx: SlackMonitorContext;
   metadata: ReturnType<typeof parseSlackModalPrivateMetadata>;
@@ -198,17 +202,17 @@ export async function emitSlackModalLifecycleEvent(params: {
 
   if (isViewClosed) {
     params.ctx.runtime.log?.(
-      `slack:interaction view_closed callback=${callbackId} user=${userId} cleared=${isCleared}`,
+      `slack:interaction view_closed callback=${sanitizeLogValue(callbackId)} user=${sanitizeLogValue(userId)} cleared=${isCleared}`,
     );
   } else {
     params.ctx.runtime.log?.(
-      `slack:interaction view_submission callback=${callbackId} user=${userId} inputs=${payload.inputs.length}`,
+      `slack:interaction view_submission callback=${sanitizeLogValue(callbackId)} user=${sanitizeLogValue(userId)} inputs=${payload.inputs.length}`,
     );
   }
 
   if (!expectedUserId) {
     params.ctx.runtime.log?.(
-      `slack:interaction drop modal callback=${callbackId} user=${userId} reason=missing-expected-user`,
+      `slack:interaction drop modal callback=${sanitizeLogValue(callbackId)} user=${sanitizeLogValue(userId)} reason=missing-expected-user`,
     );
     return;
   }
@@ -223,7 +227,7 @@ export async function emitSlackModalLifecycleEvent(params: {
   });
   if (!auth.allowed) {
     params.ctx.runtime.log?.(
-      `slack:interaction drop modal callback=${callbackId} user=${userId} reason=${auth.reason ?? "unauthorized"}`,
+      `slack:interaction drop modal callback=${sanitizeLogValue(callbackId)} user=${sanitizeLogValue(userId)} reason=${sanitizeLogValue(auth.reason ?? "unauthorized")}`,
     );
     return;
   }
