@@ -11,9 +11,13 @@ import {
 } from "./io.audit.js";
 
 function createRenameAuditRecord(home: string) {
+  const safePath = path.resolve(home, ".openclaw", "openclaw.json");
+  if (!safePath.startsWith(path.resolve(home))) {
+    throw new Error("Path traversal detected in audit record creation");
+  }
   return finalizeConfigWriteAuditRecord({
     base: createConfigWriteAuditRecordBase({
-      configPath: path.join(home, ".openclaw", "openclaw.json"),
+      configPath: safePath,
       env: {} as NodeJS.ProcessEnv,
       existsBefore: true,
       previousHash: "prev-hash",
@@ -49,7 +53,11 @@ function createRenameAuditRecord(home: string) {
 }
 
 function readAuditLog(home: string): unknown[] {
-  const auditPath = path.join(home, ".openclaw", "logs", "config-audit.jsonl");
+  const resolvedHome = path.resolve(home);
+  const auditPath = path.resolve(resolvedHome, ".openclaw", "logs", "config-audit.jsonl");
+  if (!auditPath.startsWith(resolvedHome)) {
+    throw new Error("Path traversal detected in audit log read");
+  }
   return fs
     .readFileSync(auditPath, "utf-8")
     .trim()
