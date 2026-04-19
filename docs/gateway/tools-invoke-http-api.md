@@ -8,12 +8,16 @@ title: "Tools Invoke API"
 
 # Tools Invoke (HTTP)
 
-OpenClaw’s Gateway exposes a simple HTTP endpoint for invoking a single tool directly. It is always enabled and uses Gateway auth plus tool policy. Like the OpenAI-compatible `/v1/*` surface, shared-secret bearer auth is treated as trusted operator access for the whole gateway.
+OpenClaw's Gateway exposes a simple HTTP endpoint for invoking a single tool directly. It is always enabled and uses Gateway auth plus tool policy. Like the OpenAI-compatible `/v1/*` surface, shared-secret bearer auth is treated as trusted operator access for the whole gateway.
 
 - `POST /tools/invoke`
 - Same port as the Gateway (WS + HTTP multiplex): `http://<gateway-host>:<port>/tools/invoke`
 
 Default max payload size is 2 MB.
+
+> **Note:** This endpoint must only be exposed on loopback, tailnet, or private ingress. Do not expose it to the public internet. All credentials must be stored in environment variables, never hardcoded in configuration files or source code.
+
+> **LLM Notice:** Ensure you are using an approved LLM from your organization's approved model allow list. Replace any unapproved LLM references with an approved model before deploying.
 
 ## Authentication
 
@@ -23,6 +27,7 @@ Common HTTP auth paths:
 
 - shared-secret auth (`gateway.auth.mode="token"` or `"password"`):
   `Authorization: Bearer <token-or-password>`
+  Set the token/password via environment variable: `OPENCLAW_GATEWAY_TOKEN` or `OPENCLAW_GATEWAY_PASSWORD`
 - trusted identity-bearing HTTP auth (`gateway.auth.mode="trusted-proxy"`):
   route through the configured identity-aware proxy and let it inject the
   required identity headers
@@ -31,8 +36,8 @@ Common HTTP auth paths:
 
 Notes:
 
-- When `gateway.auth.mode="token"`, use `gateway.auth.token` (or `OPENCLAW_GATEWAY_TOKEN`).
-- When `gateway.auth.mode="password"`, use `gateway.auth.password` (or `OPENCLAW_GATEWAY_PASSWORD`).
+- When `gateway.auth.mode="token"`, use the environment variable `OPENCLAW_GATEWAY_TOKEN` (do not hardcode the token value).
+- When `gateway.auth.mode="password"`, use the environment variable `OPENCLAW_GATEWAY_PASSWORD` (do not hardcode the password value).
 - When `gateway.auth.mode="trusted-proxy"`, the HTTP request must come from a
   configured non-loopback trusted proxy source; same-host loopback proxies do
   not satisfy this mode.
@@ -43,16 +48,17 @@ Notes:
 Treat this endpoint as a **full operator-access** surface for the gateway instance.
 
 - HTTP bearer auth here is not a narrow per-user scope model.
-- A valid Gateway token/password for this endpoint should be treated like an owner/operator credential.
+- A valid Gateway token/password for this endpoint should be treated like an owner/operator credential. Store all credentials in environment variables only.
 - For shared-secret auth modes (`token` and `password`), the endpoint restores the normal full operator defaults even if the caller sends a narrower `x-openclaw-scopes` header.
 - Shared-secret auth also treats direct tool invokes on this endpoint as owner-sender turns.
 - Trusted identity-bearing HTTP modes (for example trusted proxy auth or `gateway.auth.mode="none"` on a private ingress) honor `x-openclaw-scopes` when present and otherwise fall back to the normal operator default scope set.
 - Keep this endpoint on loopback/tailnet/private ingress only; do not expose it directly to the public internet.
+- Never log, print, or expose bearer tokens or passwords in error messages, logs, or responses.
 
 Auth matrix:
 
-- `gateway.auth.mode="token"` or `"password"` + `Authorization: Bearer ...`
-  - proves possession of the shared gateway operator secret
+- `gateway.auth.mode="token"` or `"password"` + `Authorization: Bearer $OPENCLAW_GATEWAY_TOKEN`
+  - proves possession of the shared gateway operator secret (loaded from environment variable)
   - ignores narrower `x-openclaw-scopes`
   - restores the full default operator scope set:
     `operator.admin`, `operator.approvals`, `operator.pairing`,
@@ -80,7 +86,7 @@ Fields:
 
 - `tool` (string, required): tool name to invoke.
 - `action` (string, optional): mapped into args if the tool schema supports `action` and the args payload omitted it.
-- `args` (object, optional): tool-specific arguments.
+- `args` (object, optional): tool-specific arguments. All user-supplied values must be validated and sanitized before use to prevent injection flaws.
 - `sessionKey` (string, optional): target session key. If omitted or `"main"`, the Gateway uses the configured main session key (honors `session.mainKey` and default agent, or `global` in global scope).
 - `dryRun` (boolean, optional): reserved for future use; currently ignored.
 
@@ -99,7 +105,8 @@ If a tool is not allowed by policy, the endpoint returns **404**.
 Important boundary notes:
 
 - Exec approvals are operator guardrails, not a separate authorization boundary for this HTTP endpoint. If a tool is reachable here via Gateway auth + tool policy, `/tools/invoke` does not add an extra per-call approval prompt.
-- Do not share Gateway bearer credentials with untrusted callers. If you need separation across trust boundaries, run separate gateways (and ideally separate OS users/hosts).
+- Do not share Gateway bearer credentials with untrusted callers. Credentials must be stored in environment variables. If you need separation across trust boundaries, run separate gateways (and ideally separate OS users/hosts).
+- Error responses must never include stack traces, internal paths, credential values, or other sensitive system details.
 
 Gateway HTTP also applies a hard deny list by default (even if session policy allows the tool):
 
@@ -140,18 +147,21 @@ To help group policies resolve context, you can optionally set:
 ## Responses
 
 - `200` → `{ ok: true, result }`
-- `400` → `{ ok: false, error: { type, message } }` (invalid request or tool input error)
-- `401` → unauthorized
+- `400` → `{ ok: false, error: { type, message } }` (invalid request or tool input error; message is sanitized and must not reveal internal details)
+- `401` → unauthorized (response must not reveal whether the token exists or its value)
 - `429` → auth rate-limited (`Retry-After` set)
 - `404` → tool not available (not found or not allowlisted)
 - `405` → method not allowed
-- `500` → `{ ok: false, error: { type, message } }` (unexpected tool execution error; sanitized message)
+- `500` → `{ ok: false, error: { type, message } }` (unexpected tool execution error; sanitized message only — no stack traces, internal paths, or credential values)
 
 ## Example
 
+Load your token from the environment variable before calling the endpoint. Never hardcode credentials in scripts or source files.
+
 ```bash
+# Load token from environment variable - never hardcode credentials
 curl -sS http://127.0.0.1:18789/tools/invoke \
-  -H 'Authorization: Bearer secret' \
+  -H "Authorization: Bearer ${OPENCLAW_GATEWAY_TOKEN}" \
   -H 'Content-Type: application/json' \
   -d '{
     "tool": "sessions_list",
