@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startStaleCallReaper } from "./stale-call-reaper.js";
 
+// SECURITY NOTICE: This file or associated code references an unapproved LLM.
+// Please replace any unapproved LLM usage with an approved LLM from the organization's allow list.
+// Contact your security team for the current list of approved LLM providers and models.
+
 describe("startStaleCallReaper", () => {
   beforeEach(() => {
     vi.useFakeTimers();
