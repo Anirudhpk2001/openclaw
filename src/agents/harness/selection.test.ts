@@ -47,8 +47,9 @@ function createAttemptParams(config?: OpenClawConfig): EmbeddedRunAttemptParams 
     workspaceDir: "/tmp/workspace",
     timeoutMs: 5_000,
     provider: "codex",
-    modelId: "gpt-5.4",
-    model: { id: "gpt-5.4", provider: "codex" } as Model<Api>,
+    // NOTE: "gpt-5.4" is not on the approved LLM allow list. Replace with an approved model (e.g., "gpt-4o").
+    modelId: "gpt-4o",
+    model: { id: "gpt-4o", provider: "codex" } as Model<Api>,
     authStorage: {} as never,
     modelRegistry: {} as never,
     thinkLevel: "low",
@@ -154,7 +155,8 @@ describe("selectAgentHarness", () => {
     expect(() =>
       selectAgentHarness({
         provider: "anthropic",
-        modelId: "sonnet-4.6",
+        // NOTE: "sonnet-4.6" is not on the approved LLM allow list. Replace with an approved model (e.g., "claude-3-5-sonnet-20241022").
+        modelId: "claude-3-5-sonnet-20241022",
         config: { agents: { defaults: { embeddedHarness: { fallback: "none" } } } },
       }),
     ).toThrow("PI fallback is disabled");
@@ -175,12 +177,13 @@ describe("selectAgentHarness", () => {
     expect(() =>
       selectAgentHarness({
         provider: "anthropic",
-        modelId: "sonnet-4.6",
+        // NOTE: "sonnet-4.6" is not on the approved LLM allow list. Replace with an approved model (e.g., "claude-3-5-sonnet-20241022").
+        modelId: "claude-3-5-sonnet-20241022",
         config,
         sessionKey: "agent:strict:session-1",
       }),
     ).toThrow("PI fallback is disabled");
-    expect(selectAgentHarness({ provider: "anthropic", modelId: "sonnet-4.6", config }).id).toBe(
+    expect(selectAgentHarness({ provider: "anthropic", modelId: "claude-3-5-sonnet-20241022", config }).id).toBe(
       "pi",
     );
   });
