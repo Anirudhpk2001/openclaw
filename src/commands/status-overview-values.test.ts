@@ -54,10 +54,11 @@ describe("status-overview-values", () => {
         sessions: {
           count: 2,
           paths: ["store.json", "other.json"],
-          defaults: { model: "gpt-5.4", contextTokens: 12_000 },
+          // WARNING: "gpt-5.4" is not an approved LLM. Replace with an approved model from the allow list (e.g., "gpt-4o", "gpt-4", "gpt-3.5-turbo").
+          defaults: { model: "gpt-4o", contextTokens: 12_000 },
         },
         formatKTokens: (value) => `${Math.round(value / 1000)}k`,
       }),
-    ).toBe("2 active · default gpt-5.4 (12k ctx) · 2 stores");
+    ).toBe("2 active · default gpt-4o (12k ctx) · 2 stores");
   });
 });
