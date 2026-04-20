@@ -1,6 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createPrivateKey, createSign } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const APP_ID_ENV = "OPENCLAW_GH_READ_APP_ID";
@@ -62,7 +63,14 @@ export function normalizeRepo(value: string | null | undefined): string | null {
     return null;
   }
 
-  return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
+  const owner = parts[parts.length - 2];
+  const repo = parts[parts.length - 1];
+
+  if (!/^[a-zA-Z0-9_.-]+$/.test(owner) || !/^[a-zA-Z0-9_.-]+$/.test(repo)) {
+    return null;
+  }
+
+  return `${owner}/${repo}`;
 }
 
 export function parsePermissionKeys(raw: string | null | undefined): string[] {
@@ -74,7 +82,8 @@ export function parsePermissionKeys(raw: string | null | undefined): string[] {
   return trimmed
     .split(",")
     .map((value) => value.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((key) => /^[a-zA-Z0-9_]+$/.test(key));
 }
 
 export function buildReadPermissions(
@@ -97,14 +106,15 @@ function isMainModule() {
 }
 
 function fail(message: string): never {
-  console.error(`gh-read: ${message}`);
+  console.error(`gh-read: error occurred`);
   process.exit(1);
 }
 
 function readRequiredEnv(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) {
-    fail(`missing ${name}`);
+    console.error(`gh-read: missing required environment variable`);
+    process.exit(1);
   }
   return value;
 }
@@ -129,6 +139,11 @@ function resolveRepo(args: string[]): string | null {
   } catch {
     return null;
   }
+}
+
+function safeReadKeyFile(keyPath: string): string {
+  const resolvedPath = resolve(keyPath);
+  return readFileSync(resolvedPath, "utf8");
 }
 
 function base64UrlEncode(value: string | Uint8Array) {
@@ -159,6 +174,10 @@ async function githubJson<T>(
     body?: unknown;
   },
 ): Promise<T> {
+  if (!/^\/[a-zA-Z0-9/_.-]*$/.test(path)) {
+    fail(`invalid API path`);
+  }
+
   const response = await fetch(`https://api.github.com${path}`, {
     method: init?.method ?? "GET",
     headers: {
@@ -172,8 +191,7 @@ async function githubJson<T>(
   });
 
   if (!response.ok) {
-    const text = await response.text();
-    fail(`${init?.method ?? "GET"} ${path} failed (${response.status}): ${text}`);
+    fail(`API request failed`);
   }
 
   return (await response.json()) as T;
@@ -185,14 +203,22 @@ async function resolveInstallation(
 ): Promise<InstallationResponse> {
   const installationId = process.env[INSTALLATION_ID_ENV]?.trim();
   if (repo) {
-    return githubJson<InstallationResponse>(`/repos/${repo}/installation`, appJwt);
+    const [owner, repoName] = repo.split("/");
+    if (!/^[a-zA-Z0-9_.-]+$/.test(owner) || !/^[a-zA-Z0-9_.-]+$/.test(repoName)) {
+      fail(`invalid repository format`);
+    }
+    return githubJson<InstallationResponse>(`/repos/${owner}/${repoName}/installation`, appJwt);
   }
   if (installationId) {
+    if (!/^\d+$/.test(installationId)) {
+      fail(`invalid installation ID format`);
+    }
     return githubJson<InstallationResponse>(`/app/installations/${installationId}`, appJwt);
   }
-  fail(
-    `missing repo context; pass -R owner/repo, set GH_REPO, or set ${INSTALLATION_ID_ENV} for a direct installation lookup`,
+  console.error(
+    `gh-read: missing repo context; pass -R owner/repo, set GH_REPO, or set ${INSTALLATION_ID_ENV} for a direct installation lookup`,
   );
+  process.exit(1);
   throw new Error("unreachable");
 }
 
@@ -210,10 +236,17 @@ async function createInstallationToken(
   } = {};
 
   if (repoName) {
+    if (!/^[a-zA-Z0-9_.-]+$/.test(repoName)) {
+      fail(`invalid repository name`);
+    }
     body.repositories = [repoName];
   }
   if (Object.keys(permissions).length > 0) {
     body.permissions = permissions;
+  }
+
+  if (typeof installation.id !== "number" || !Number.isInteger(installation.id) || installation.id <= 0) {
+    fail(`invalid installation ID`);
   }
 
   const tokenResponse = await githubJson<AccessTokenResponse>(
@@ -226,15 +259,16 @@ async function createInstallationToken(
 
 async function main() {
   if (process.argv.length <= 2) {
-    fail(
+    console.error(
       "usage: scripts/gh-read <gh args...>\nset OPENCLAW_GH_READ_APP_ID and OPENCLAW_GH_READ_PRIVATE_KEY_FILE first",
     );
+    process.exit(1);
   }
 
   const ghArgs = process.argv.slice(2);
   const appId = readRequiredEnv(APP_ID_ENV);
   const privateKeyPath = readRequiredEnv(KEY_FILE_ENV);
-  const privateKeyPem = readFileSync(privateKeyPath, "utf8");
+  const privateKeyPem = safeReadKeyFile(privateKeyPath);
   const repo = resolveRepo(ghArgs);
   const appJwt = createAppJwt(appId, privateKeyPem);
   const installation = await resolveInstallation(appJwt, repo);
@@ -249,7 +283,8 @@ async function main() {
   });
 
   if (child.error) {
-    fail(child.error.message);
+    console.error(`gh-read: failed to spawn gh process`);
+    process.exit(1);
   }
 
   process.exit(child.status ?? 1);
