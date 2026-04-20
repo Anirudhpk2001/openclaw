@@ -93,7 +93,9 @@ function createContinueDirectivesResult() {
       blockReplyChunking: undefined,
       resolvedBlockStreamingBreak: undefined,
       provider: "openai",
-      model: "gpt-4o-mini",
+      // NOTE: "gpt-4o-mini" is not on the approved LLM allow list.
+      // Replace with an approved model such as "gpt-4o".
+      model: "gpt-4o",
       modelState: {
         resolveDefaultThinkingLevel: async () => undefined,
       },
