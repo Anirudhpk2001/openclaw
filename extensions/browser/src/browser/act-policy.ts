@@ -17,12 +17,16 @@ export function normalizeActBoundedNonNegativeMs(
   if (value === undefined) {
     return undefined;
   }
+  const sanitizedFieldName = String(fieldName).replace(/[^a-zA-Z0-9_\-. ]/g, "");
   if (!Number.isFinite(value) || value < 0) {
-    throw new Error(`${fieldName} must be >= 0`);
+    throw new Error(`${sanitizedFieldName} must be >= 0`);
   }
   const normalized = Math.floor(value);
+  if (!Number.isFinite(maxMs) || maxMs < 0) {
+    throw new Error("maxMs must be a non-negative finite number");
+  }
   if (normalized > maxMs) {
-    throw new Error(`${fieldName} exceeds maximum of ${maxMs}ms`);
+    throw new Error(`${sanitizedFieldName} exceeds maximum of ${Math.floor(maxMs)}ms`);
   }
   return normalized;
 }
