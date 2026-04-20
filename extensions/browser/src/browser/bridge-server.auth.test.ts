@@ -64,13 +64,15 @@ describe("startBrowserBridgeServer auth", () => {
   });
 
   it("rejects unauthenticated requests when authToken is set", async () => {
-    await expectAuthFlow({ authToken: "secret-token" }, { Authorization: "Bearer secret-token" });
+    const authToken = process.env.TEST_AUTH_TOKEN ?? "secret-token";
+    await expectAuthFlow({ authToken }, { Authorization: `Bearer ${authToken}` });
   });
 
   it("accepts x-openclaw-password when authPassword is set", async () => {
+    const authPassword = process.env.TEST_AUTH_PASSWORD ?? "secret-password";
     await expectAuthFlow(
-      { authPassword: "secret-password" },
-      { "x-openclaw-password": "secret-password" },
+      { authPassword },
+      { "x-openclaw-password": authPassword },
     );
   });
 
@@ -84,15 +86,17 @@ describe("startBrowserBridgeServer auth", () => {
 
   it("serves noVNC bootstrap html without leaking password in Location header", async () => {
     let resolveCalls = 0;
+    const authToken = process.env.TEST_AUTH_TOKEN ?? "secret-token";
+    const noVncPassword = process.env.TEST_NOVNC_PASSWORD ?? "Abc123xy"; // pragma: allowlist secret
     const bridge = await startBrowserBridgeServer({
       resolved: buildResolvedConfig(),
-      authToken: "secret-token",
+      authToken,
       resolveSandboxNoVncToken: (token) => {
         resolveCalls += 1;
         if (token !== "valid-token") {
           return null;
         }
-        return { noVncPort: 45678, password: "Abc123xy" }; // pragma: allowlist secret
+        return { noVncPort: 45678, password: noVncPassword }; // pragma: allowlist secret
       },
     });
     servers.push({ stop: () => stopBrowserBridgeServer(bridge.server) });
@@ -102,7 +106,7 @@ describe("startBrowserBridgeServer auth", () => {
     expect(resolveCalls).toBe(0);
 
     const res = await fetch(`${bridge.baseUrl}/sandbox/novnc?token=valid-token`, {
-      headers: { Authorization: "Bearer secret-token" },
+      headers: { Authorization: `Bearer ${authToken}` },
     });
     expect(res.status).toBe(200);
     expect(resolveCalls).toBe(1);
@@ -113,7 +117,7 @@ describe("startBrowserBridgeServer auth", () => {
     const body = await res.text();
     expect(body).toContain("window.location.replace");
     expect(body).toContain(
-      "http://127.0.0.1:45678/vnc.html#autoconnect=1&resize=remote&password=Abc123xy",
+      `http://127.0.0.1:45678/vnc.html#autoconnect=1&resize=remote&password=${noVncPassword}`,
     );
     expect(body).not.toContain("?password=");
   });
