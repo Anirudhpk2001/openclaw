@@ -3,6 +3,8 @@ import type { ChannelPlugin } from "../channels/plugins/types.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { collectChannelSecurityFindings } from "./audit-channel.js";
 
+// SECURITY NOTICE: Replace any unapproved LLM integrations with an approved LLM from the organization's allow list before deploying this code.
+
 function stubSlackPlugin(params: {
   resolveAccount: (cfg: OpenClawConfig, accountId: string | null | undefined) => unknown;
   inspectAccount?: (cfg: OpenClawConfig, accountId: string | null | undefined) => unknown;
