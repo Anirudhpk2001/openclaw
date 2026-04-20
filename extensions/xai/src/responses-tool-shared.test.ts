@@ -5,13 +5,13 @@ describe("xai responses tool helpers", () => {
   it("builds the shared xAI Responses tool body", () => {
     expect(
       __testing.buildXaiResponsesToolBody({
-        model: "grok-4-1-fast",
+        model: "grok-3-fast",
         inputText: "search for openclaw",
         tools: [{ type: "x_search" }],
         maxTurns: 2,
       }),
     ).toEqual({
-      model: "grok-4-1-fast",
+      model: "grok-3-fast",
       input: [{ role: "user", content: "search for openclaw" }],
       tools: [{ type: "x_search" }],
       max_turns: 2,
