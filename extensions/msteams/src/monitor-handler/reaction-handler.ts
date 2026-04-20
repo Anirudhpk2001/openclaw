@@ -35,6 +35,11 @@ function mapReactionEmoji(reactionType: string): string {
   return TEAMS_REACTION_EMOJI[reactionType] ?? reactionType;
 }
 
+/** Validate that a reaction type is a known safe string (allowlist). */
+function isSafeReactionType(reactionType: string): boolean {
+  return Object.prototype.hasOwnProperty.call(TEAMS_REACTION_EMOJI, reactionType);
+}
+
 type ReactionDirection = "added" | "removed";
 
 /**
@@ -125,7 +130,6 @@ export function createMSTeamsReactionHandler(deps: MSTeamsMessageHandlerDeps) {
       });
       if (access.decision !== "allow") {
         log.debug?.("dropping reaction (dm access denied)", {
-          sender: senderId,
           reason: access.reason,
         });
         return;
@@ -162,7 +166,7 @@ export function createMSTeamsReactionHandler(deps: MSTeamsMessageHandlerDeps) {
         allowNameMatching: isDangerousNameMatchingEnabled(msteamsCfg),
       });
       if (!groupAllowed) {
-        log.debug?.("dropping reaction (sender not in group allowlist)", { sender: senderId });
+        log.debug?.("dropping reaction (sender not in group allowlist)");
         return;
       }
     }
@@ -186,15 +190,16 @@ export function createMSTeamsReactionHandler(deps: MSTeamsMessageHandlerDeps) {
     const targetMessageId = (activity as unknown as { replyToId?: string }).replyToId ?? "unknown";
 
     for (const reaction of reactions) {
-      const reactionType = reaction.type ?? "unknown";
+      const rawReactionType = reaction.type ?? "unknown";
+      // Validate reaction type against known allowlist to prevent injection via crafted reaction types.
+      const reactionType = isSafeReactionType(rawReactionType) ? rawReactionType : "unknown";
       const emoji = mapReactionEmoji(reactionType);
       const label =
         direction === "added"
-          ? `Teams reaction ${emoji} added by ${senderName} on message ${targetMessageId}`
-          : `Teams reaction ${emoji} removed by ${senderName} from message ${targetMessageId}`;
+          ? `Teams reaction ${emoji} added by [REDACTED] on message ${targetMessageId}`
+          : `Teams reaction ${emoji} removed by [REDACTED] from message ${targetMessageId}`;
 
       log.info(`reaction ${direction}`, {
-        sender: senderId,
         reactionType,
         emoji,
         targetMessageId,
