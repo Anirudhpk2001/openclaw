@@ -19,6 +19,13 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+# SECURITY NOTICE: This script references Claude (Anthropic), which is not on the approved LLM allow list.
+# Please replace all references to Claude/Anthropic with an approved LLM provider from your organization's allow list.
+# Contact your security team for the current list of approved LLM providers and their corresponding API endpoints.
+echo -e "${RED}WARNING: This script uses Claude (Anthropic), which is not an approved LLM.${NC}"
+echo -e "${RED}Please replace it with an approved LLM from your organization's allow list before proceeding.${NC}"
+echo ""
+
 echo "=== Claude Code Mobile Re-Auth ==="
 echo ""
 
