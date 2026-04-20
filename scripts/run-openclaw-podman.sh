@@ -176,6 +176,10 @@ load_podman_env_file() {
     if [[ "$value" =~ ^\".*\"$ || "$value" =~ ^\'.*\'$ ]]; then
       value="${value:1:${#value}-2}"
     fi
+    # Validate that loaded values do not contain newlines or carriage returns
+    if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+      continue
+    fi
     printf -v "$key" '%s' "$value"
     export "$key"
   done
@@ -189,6 +193,34 @@ validate_port() {
   [[ "$value" =~ ^[0-9]{1,5}$ ]] || fail "Invalid $label: must be numeric."
   numeric=$((10#$value))
   (( numeric >= 1 && numeric <= 65535 )) || fail "Invalid $label: out of range."
+}
+
+validate_container_name() {
+  local label="$1"
+  local value="$2"
+  validate_single_line_value "$label" "$value"
+  [[ "$value" =~ ^[a-zA-Z0-9_.-]+$ ]] || fail "Invalid $label: only alphanumeric characters, underscores, hyphens, and dots are allowed."
+}
+
+validate_image_name() {
+  local label="$1"
+  local value="$2"
+  validate_single_line_value "$label" "$value"
+  [[ "$value" =~ ^[a-zA-Z0-9_./:@-]+$ ]] || fail "Invalid $label: invalid characters in image name."
+}
+
+validate_publish_host() {
+  local label="$1"
+  local value="$2"
+  validate_single_line_value "$label" "$value"
+  [[ "$value" =~ ^[a-zA-Z0-9_.:-]+$ ]] || fail "Invalid $label: invalid characters in publish host."
+}
+
+validate_gateway_bind() {
+  local label="$1"
+  local value="$2"
+  validate_single_line_value "$label" "$value"
+  [[ "$value" =~ ^[a-zA-Z0-9_.:-]+$ ]] || fail "Invalid $label: invalid characters in gateway bind value."
 }
 
 EFFECTIVE_USER="$(id -un)"
@@ -246,11 +278,17 @@ PUBLISH_HOST="${OPENCLAW_PODMAN_PUBLISH_HOST:-127.0.0.1}"
 validate_mount_source_path "config directory" "$CONFIG_DIR"
 validate_mount_source_path "workspace directory" "$WORKSPACE_DIR"
 validate_absolute_path "env file path" "$ENV_FILE"
-validate_single_line_value "container name" "$CONTAINER_NAME"
-validate_single_line_value "image name" "$OPENCLAW_IMAGE"
-validate_single_line_value "publish host" "$PUBLISH_HOST"
+validate_container_name "container name" "$CONTAINER_NAME"
+validate_image_name "image name" "$OPENCLAW_IMAGE"
+validate_publish_host "publish host" "$PUBLISH_HOST"
 validate_port "gateway host port" "$HOST_GATEWAY_PORT"
 validate_port "bridge host port" "$HOST_BRIDGE_PORT"
+
+# Validate PODMAN_PULL to prevent injection
+case "${OPENCLAW_PODMAN_PULL:-never}" in
+  always|missing|never|newer) ;;
+  *) fail "Invalid OPENCLAW_PODMAN_PULL: must be one of always, missing, never, newer." ;;
+esac
 
 cd "$EFFECTIVE_HOME" 2>/dev/null || cd /tmp 2>/dev/null || true
 
@@ -280,6 +318,7 @@ resolve_config_gateway_bind() {
 # OPENCLAW_GATEWAY_BIND first, then gateway.bind in local config.
 CONFIG_GATEWAY_BIND="$(resolve_config_gateway_bind "$CONFIG_DIR")"
 GATEWAY_BIND="${OPENCLAW_GATEWAY_BIND:-${CONFIG_GATEWAY_BIND:-lan}}"
+validate_gateway_bind "gateway bind" "$GATEWAY_BIND"
 
 upsert_env_var() {
   local file="$1"
@@ -290,6 +329,7 @@ upsert_env_var() {
   ensure_safe_write_file_path "env file" "$file"
   dir="$(dirname "$file")"
   tmp="$(mktemp "$dir/.env.tmp.XXXXXX")"
+  chmod 600 "$tmp"
   if [[ -f "$file" ]]; then
     awk -v k="$key" -v v="$value" '
       BEGIN { found = 0 }
@@ -480,12 +520,18 @@ cleanup_token_env_file() {
 trap cleanup_token_env_file EXIT
 
 if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
-  export OPENCLAW_GATEWAY_TOKEN="$(generate_token_hex_32)"
+  OPENCLAW_GATEWAY_TOKEN="$(generate_token_hex_32)"
+  export OPENCLAW_GATEWAY_TOKEN
+  # Validate token format before use
+  [[ "$OPENCLAW_GATEWAY_TOKEN" =~ ^[0-9a-f]{64}$ ]] || fail "Generated token has unexpected format."
   mkdir -p "$(dirname "$ENV_FILE")"
   ensure_safe_existing_dir "env file directory" "$(dirname "$ENV_FILE")"
   upsert_env_var "$ENV_FILE" "OPENCLAW_GATEWAY_TOKEN" "$OPENCLAW_GATEWAY_TOKEN"
   echo "Generated OPENCLAW_GATEWAY_TOKEN and wrote it to $ENV_FILE." >&2
 fi
+
+# Validate token format for externally supplied tokens as well
+[[ "$OPENCLAW_GATEWAY_TOKEN" =~ ^[0-9a-f]{64}$ ]] || fail "OPENCLAW_GATEWAY_TOKEN has unexpected format: must be 64 hex characters."
 
 CONFIG_JSON="$CONFIG_DIR/openclaw.json"
 if [[ ! -f "$CONFIG_JSON" ]]; then
@@ -529,8 +575,13 @@ if [[ -z "${OPENCLAW_BIND_MOUNT_OPTIONS:-}" ]]; then
     fi
   fi
 else
-  SELINUX_MOUNT_OPTS="${OPENCLAW_BIND_MOUNT_OPTIONS#:}"
-  [[ -n "$SELINUX_MOUNT_OPTS" ]] && SELINUX_MOUNT_OPTS=",$SELINUX_MOUNT_OPTS"
+  # Validate bind mount options to prevent injection via comma-separated options
+  _raw_mount_opts="${OPENCLAW_BIND_MOUNT_OPTIONS#:}"
+  if [[ "$_raw_mount_opts" =~ ^[a-zA-Z0-9,=_-]*$ ]]; then
+    SELINUX_MOUNT_OPTS="${_raw_mount_opts:+,$_raw_mount_opts}"
+  else
+    fail "Invalid OPENCLAW_BIND_MOUNT_OPTIONS: contains disallowed characters."
+  fi
 fi
 
 if [[ "$RUN_SETUP" == true ]]; then
