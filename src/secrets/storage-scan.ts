@@ -7,8 +7,26 @@ import { resolveUserPath } from "../utils.js";
 import { listAuthProfileStorePaths as listAuthProfileStorePathsFromAuthStorePaths } from "./auth-store-paths.js";
 import { parseEnvValue } from "./shared.js";
 
+const MAX_PATH_LENGTH = 4096;
+
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSafePath(resolvedPath: string, allowedBase: string): boolean {
+  const normalizedPath = path.normalize(resolvedPath);
+  const normalizedBase = path.normalize(allowedBase);
+  return normalizedPath.startsWith(normalizedBase + path.sep) || normalizedPath === normalizedBase;
+}
+
+function sanitizePath(inputPath: string): string {
+  if (!inputPath || typeof inputPath !== "string") {
+    throw new Error("Invalid path input");
+  }
+  if (inputPath.length > MAX_PATH_LENGTH) {
+    throw new Error("Path exceeds maximum allowed length");
+  }
+  return path.normalize(inputPath);
 }
 
 export function parseEnvAssignmentValue(raw: string): string {
@@ -21,7 +39,8 @@ export function listAuthProfileStorePaths(config: OpenClawConfig, stateDir: stri
 
 export function listLegacyAuthJsonPaths(stateDir: string): string[] {
   const out: string[] = [];
-  const agentsRoot = path.join(resolveUserPath(stateDir), "agents");
+  const resolvedStateDir = resolveUserPath(stateDir);
+  const agentsRoot = path.resolve(sanitizePath(resolvedStateDir), "agents");
   if (!fs.existsSync(agentsRoot)) {
     return out;
   }
@@ -29,9 +48,16 @@ export function listLegacyAuthJsonPaths(stateDir: string): string[] {
     if (!entry.isDirectory()) {
       continue;
     }
-    const candidate = path.join(agentsRoot, entry.name, "agent", "auth.json");
+    const entryName = path.basename(entry.name);
+    const candidate = path.resolve(agentsRoot, entryName, "agent", "auth.json");
+    if (!isSafePath(candidate, agentsRoot)) {
+      continue;
+    }
     if (fs.existsSync(candidate)) {
-      out.push(candidate);
+      const stats = fs.statSync(candidate);
+      if (stats.isFile()) {
+        out.push(candidate);
+      }
     }
   }
   return out;
@@ -40,9 +66,11 @@ export function listLegacyAuthJsonPaths(stateDir: string): string[] {
 function resolveActiveAgentDir(stateDir: string, env: NodeJS.ProcessEnv = process.env): string {
   const override = env.OPENCLAW_AGENT_DIR?.trim() || env.PI_CODING_AGENT_DIR?.trim();
   if (override) {
-    return resolveUserPath(override);
+    const resolvedOverride = resolveUserPath(sanitizePath(override));
+    return path.resolve(resolvedOverride);
   }
-  return path.join(resolveUserPath(stateDir), "agents", "main", "agent");
+  const resolvedStateDir = resolveUserPath(stateDir);
+  return path.resolve(sanitizePath(resolvedStateDir), "agents", "main", "agent");
 }
 
 export function listAgentModelsJsonPaths(
@@ -51,27 +79,45 @@ export function listAgentModelsJsonPaths(
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
   const resolvedStateDir = resolveUserPath(stateDir);
+  const normalizedStateDir = path.resolve(sanitizePath(resolvedStateDir));
   const paths = new Set<string>();
-  paths.add(path.join(resolvedStateDir, "agents", "main", "agent", "models.json"));
-  paths.add(path.join(resolveActiveAgentDir(stateDir, env), "models.json"));
 
-  const agentsRoot = path.join(resolvedStateDir, "agents");
+  const mainAgentModels = path.resolve(normalizedStateDir, "agents", "main", "agent", "models.json");
+  if (isSafePath(mainAgentModels, normalizedStateDir)) {
+    paths.add(mainAgentModels);
+  }
+
+  const activeAgentDir = resolveActiveAgentDir(stateDir, env);
+  const activeModels = path.resolve(activeAgentDir, "models.json");
+  paths.add(activeModels);
+
+  const agentsRoot = path.resolve(normalizedStateDir, "agents");
   if (fs.existsSync(agentsRoot)) {
     for (const entry of fs.readdirSync(agentsRoot, { withFileTypes: true })) {
       if (!entry.isDirectory()) {
         continue;
       }
-      paths.add(path.join(agentsRoot, entry.name, "agent", "models.json"));
+      const entryName = path.basename(entry.name);
+      const candidate = path.resolve(agentsRoot, entryName, "agent", "models.json");
+      if (!isSafePath(candidate, agentsRoot)) {
+        continue;
+      }
+      paths.add(candidate);
     }
   }
 
   for (const agentId of listAgentIds(config)) {
     if (agentId === "main") {
-      paths.add(path.join(resolvedStateDir, "agents", "main", "agent", "models.json"));
+      const mainModels = path.resolve(normalizedStateDir, "agents", "main", "agent", "models.json");
+      if (isSafePath(mainModels, normalizedStateDir)) {
+        paths.add(mainModels);
+      }
       continue;
     }
     const agentDir = resolveAgentDir(config, agentId);
-    paths.add(path.join(resolveUserPath(agentDir), "models.json"));
+    const resolvedAgentDir = path.resolve(resolveUserPath(sanitizePath(agentDir)));
+    const agentModels = path.resolve(resolvedAgentDir, "models.json");
+    paths.add(agentModels);
   }
 
   return [...paths];
@@ -100,15 +146,31 @@ export function readJsonObjectIfExists(
   value: Record<string, unknown> | null;
   error?: string;
 } {
-  if (!fs.existsSync(filePath)) {
+  let normalizedPath: string;
+  try {
+    normalizedPath = path.resolve(sanitizePath(filePath));
+  } catch {
+    return {
+      value: null,
+      error: "Invalid file path provided",
+    };
+  }
+
+  if (!fs.existsSync(normalizedPath)) {
     return { value: null };
   }
   try {
-    const stats = fs.statSync(filePath);
+    const stats = fs.statSync(normalizedPath);
+    if (!stats.isFile()) {
+      return {
+        value: null,
+        error: `Refusing to read non-regular file: ${normalizedPath}`,
+      };
+    }
     if (options.requireRegularFile && !stats.isFile()) {
       return {
         value: null,
-        error: `Refusing to read non-regular file: ${filePath}`,
+        error: `Refusing to read non-regular file: ${normalizedPath}`,
       };
     }
     if (
@@ -119,11 +181,19 @@ export function readJsonObjectIfExists(
     ) {
       return {
         value: null,
-        error: `Refusing to read oversized JSON (${stats.size} bytes): ${filePath}`,
+        error: `Refusing to read oversized JSON (${stats.size} bytes): ${normalizedPath}`,
       };
     }
-    const raw = fs.readFileSync(filePath, "utf8");
-    const parsed: unknown = JSON.parse(raw);
+    const raw = fs.readFileSync(normalizedPath, "utf8");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return {
+        value: null,
+        error: "Failed to parse JSON: invalid JSON format",
+      };
+    }
     if (!isJsonObject(parsed)) {
       return { value: null };
     }
