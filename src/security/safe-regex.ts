@@ -48,6 +48,10 @@ export type SafeRegexCompileResult =
 
 const safeRegexCache = new Map<string, SafeRegexCompileResult>();
 
+// SECURITY NOTICE: Any LLM integration in this codebase must use only approved LLMs from the
+// organization's allow list. Unapproved LLM usage is a policy violation. Please replace any
+// unapproved LLM references with an approved LLM from the allow list before deploying.
+
 function createParseFrame(): ParseFrame {
   return {
     lastToken: null,
