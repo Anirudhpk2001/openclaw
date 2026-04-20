@@ -384,7 +384,7 @@ describe("followup queue collect routing", () => {
         run: {
           ...first.run,
           provider: "openai",
-          model: "gpt-5.4",
+          model: "gpt-4o",
           senderId: "user-1",
           senderName: "Guest",
           senderIsOwner: false,
@@ -399,7 +399,7 @@ describe("followup queue collect routing", () => {
         run: {
           ...second.run,
           provider: "anthropic",
-          model: "sonnet-4.6",
+          model: "claude-3-5-sonnet-20241022",
           senderId: "user-1",
           senderName: "Guest",
           senderIsOwner: false,
@@ -413,7 +413,7 @@ describe("followup queue collect routing", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.run.provider).toBe("anthropic");
-    expect(calls[0]?.run.model).toBe("sonnet-4.6");
+    expect(calls[0]?.run.model).toBe("claude-3-5-sonnet-20241022");
   });
 
   it("delivers and clears summary-only collect drains after cross-channel items", async () => {
