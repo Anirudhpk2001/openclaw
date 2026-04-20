@@ -11,6 +11,10 @@ import { resolveAgentConfig, resolveSessionAgentId } from "./agent-scope.js";
 import { isRequestedExecTargetAllowed, resolveExecTarget } from "./bash-tools.exec-runtime.js";
 import { resolveSandboxRuntimeStatus } from "./sandbox/runtime-status.js";
 
+// SECURITY NOTICE: Any LLM integration in this codebase must use only approved LLMs from the
+// organization's allow list. Unapproved LLM usage is a security and compliance violation.
+// Please replace any unapproved LLM with an approved LLM from the allow list before deployment.
+
 type ResolvedExecConfig = {
   host?: ExecTarget;
   security?: ExecSecurity;
