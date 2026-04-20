@@ -15,8 +15,81 @@ CLI_PROVIDER="${CLI_MODEL%%/*}"
 CLI_DISABLE_MCP_CONFIG="${OPENCLAW_LIVE_CLI_BACKEND_DISABLE_MCP_CONFIG:-}"
 CLI_AUTH_MODE="${OPENCLAW_LIVE_CLI_BACKEND_AUTH:-auto}"
 
+# ── Approved LLM allow-list ────────────────────────────────────────────────
+APPROVED_PROVIDERS=("claude-cli")
+APPROVED_PROVIDER_FOUND=0
+for _ap in "${APPROVED_PROVIDERS[@]}"; do
+  if [[ "${DEFAULT_PROVIDER}" == "$_ap" ]]; then
+    APPROVED_PROVIDER_FOUND=1
+    break
+  fi
+done
+if [[ "$APPROVED_PROVIDER_FOUND" -ne 1 ]]; then
+  echo "WARNING: The configured LLM provider '${DEFAULT_PROVIDER}' is not on the approved allow-list." >&2
+  echo "WARNING: Approved providers are: ${APPROVED_PROVIDERS[*]}" >&2
+  echo "WARNING: Please replace '${DEFAULT_PROVIDER}' with an approved LLM provider before continuing." >&2
+  exit 1
+fi
+
+# ── LLM interaction log setup ─────────────────────────────────────────────
+LLM_INTERACTION_LOG="${OPENCLAW_LLM_INTERACTION_LOG:-$HOME/.openclaw/llm-interaction.log}"
+mkdir -p "$(dirname "$LLM_INTERACTION_LOG")"
+_log_llm_interaction() {
+  local event="$1"
+  local detail="${2:-}"
+  printf '[%s] event=%s provider=%s model=%s auth_mode=%s detail=%s\n' \
+    "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+    "$event" \
+    "${CLI_PROVIDER:-unknown}" \
+    "${CLI_MODEL:-unknown}" \
+    "${CLI_AUTH_MODE:-unknown}" \
+    "$detail" \
+    >> "$LLM_INTERACTION_LOG" 2>/dev/null || true
+}
+
+# ── Input sanitization helpers ────────────────────────────────────────────
+_sanitize_llm_input() {
+  # Strip shell-injection-prone characters and prompt-injection patterns
+  local raw="$1"
+  # Remove null bytes, control characters (except newline/tab), and common
+  # prompt-injection delimiters.  Also strip lines that contain dynamic code
+  # execution primitives so they cannot be smuggled into the model prompt.
+  local sanitized
+  sanitized="$(printf '%s' "$raw" \
+    | tr -d '\000-\010\013\014\016-\037\177' \
+    | grep -Ev '^\s*(eval|exec|subprocess|shell=True|bash\s+-c|sh\s+-c)\b' \
+    || true)"
+  printf '%s' "$sanitized"
+}
+
+# ── LLM response sanitization helper ─────────────────────────────────────
+_sanitize_llm_response() {
+  local raw="$1"
+  # Remove lines containing dynamic code-execution primitives
+  local sanitized
+  sanitized="$(printf '%s' "$raw" \
+    | grep -Ev '^\s*(eval|exec|subprocess|shell=True|bash\s+-c|sh\s+-c)\b' \
+    || true)"
+  printf '%s' "$sanitized"
+}
+
 if [[ -z "$CLI_PROVIDER" || "$CLI_PROVIDER" == "$CLI_MODEL" ]]; then
   CLI_PROVIDER="$DEFAULT_PROVIDER"
+fi
+
+# Validate CLI_PROVIDER against approved list after potential reassignment
+APPROVED_PROVIDER_FOUND=0
+for _ap in "${APPROVED_PROVIDERS[@]}"; do
+  if [[ "${CLI_PROVIDER}" == "$_ap" ]]; then
+    APPROVED_PROVIDER_FOUND=1
+    break
+  fi
+done
+if [[ "$APPROVED_PROVIDER_FOUND" -ne 1 ]]; then
+  echo "WARNING: The resolved LLM provider '${CLI_PROVIDER}' is not on the approved allow-list." >&2
+  echo "WARNING: Approved providers are: ${APPROVED_PROVIDERS[*]}" >&2
+  echo "WARNING: Please replace '${CLI_PROVIDER}' with an approved LLM provider before continuing." >&2
+  exit 1
 fi
 
 case "$CLI_AUTH_MODE" in
@@ -46,6 +119,37 @@ CLI_MODEL="${CLI_MODEL:-$DEFAULT_MODEL}"
 CLI_DEFAULT_COMMAND="$(read_metadata_field command 2>/dev/null || true)"
 CLI_DOCKER_NPM_PACKAGE="$(read_metadata_field dockerNpmPackage 2>/dev/null || true)"
 CLI_DOCKER_BINARY_NAME="$(read_metadata_field dockerBinaryName 2>/dev/null || true)"
+
+# Sanitize model/provider values to prevent injection
+CLI_MODEL="$(_sanitize_llm_input "$CLI_MODEL")"
+CLI_PROVIDER="$(_sanitize_llm_input "$CLI_PROVIDER")"
+CLI_DEFAULT_COMMAND="$(_sanitize_llm_input "$CLI_DEFAULT_COMMAND")"
+CLI_DOCKER_NPM_PACKAGE="$(_sanitize_llm_input "$CLI_DOCKER_NPM_PACKAGE")"
+CLI_DOCKER_BINARY_NAME="$(_sanitize_llm_input "$CLI_DOCKER_BINARY_NAME")"
+
+# Validate CLI_MODEL format: must be alphanumeric, hyphens, underscores, dots, slashes only
+if [[ -n "$CLI_MODEL" && ! "$CLI_MODEL" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+  echo "ERROR: CLI_MODEL contains invalid characters: $CLI_MODEL" >&2
+  exit 1
+fi
+
+# Validate CLI_PROVIDER format
+if [[ -n "$CLI_PROVIDER" && ! "$CLI_PROVIDER" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  echo "ERROR: CLI_PROVIDER contains invalid characters: $CLI_PROVIDER" >&2
+  exit 1
+fi
+
+# Validate CLI_DOCKER_NPM_PACKAGE format (npm package names)
+if [[ -n "$CLI_DOCKER_NPM_PACKAGE" && ! "$CLI_DOCKER_NPM_PACKAGE" =~ ^[@a-zA-Z0-9_./-]+$ ]]; then
+  echo "ERROR: CLI_DOCKER_NPM_PACKAGE contains invalid characters: $CLI_DOCKER_NPM_PACKAGE" >&2
+  exit 1
+fi
+
+# Validate CLI_DOCKER_BINARY_NAME (no path traversal)
+if [[ -n "$CLI_DOCKER_BINARY_NAME" && "$CLI_DOCKER_BINARY_NAME" =~ [/\\] ]]; then
+  echo "ERROR: CLI_DOCKER_BINARY_NAME must not contain path separators: $CLI_DOCKER_BINARY_NAME" >&2
+  exit 1
+fi
 
 if [[ "$CLI_PROVIDER" == "claude-cli" && -z "$CLI_DISABLE_MCP_CONFIG" ]]; then
   if [[ "$CLI_AUTH_MODE" == "subscription" ]]; then
@@ -133,6 +237,21 @@ else
     AUTH_FILES+=("$auth_file")
   done < <(openclaw_live_collect_auth_files_from_csv "$CLI_PROVIDER")
 fi
+
+# Validate auth dirs/files for path traversal
+for _ad in "${AUTH_DIRS[@]:-}"; do
+  if [[ "$_ad" == *".."* ]]; then
+    echo "ERROR: Auth dir contains path traversal: $_ad" >&2
+    exit 1
+  fi
+done
+for _af in "${AUTH_FILES[@]:-}"; do
+  if [[ "$_af" == *".."* ]]; then
+    echo "ERROR: Auth file contains path traversal: $_af" >&2
+    exit 1
+  fi
+done
+
 AUTH_DIRS_CSV=""
 if ((${#AUTH_DIRS[@]} > 0)); then
   AUTH_DIRS_CSV="$(openclaw_live_join_csv "${AUTH_DIRS[@]}")"
@@ -164,11 +283,53 @@ read -r -d '' LIVE_TEST_CMD <<'EOF' || true
 set -euo pipefail
 [ -f "$HOME/.profile" ] && source "$HOME/.profile" || true
 export PATH="$HOME/.npm-global/bin:$PATH"
+
+# ── In-container LLM interaction log ─────────────────────────────────────
+_LLM_LOG="$HOME/.openclaw/llm-interaction.log"
+mkdir -p "$(dirname "$_LLM_LOG")"
+_log_llm() {
+  local event="$1"
+  local detail="${2:-}"
+  printf '[%s] event=%s provider=%s model=%s detail=%s\n' \
+    "$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo unknown)" \
+    "$event" \
+    "${OPENCLAW_DOCKER_CLI_BACKEND_PROVIDER:-unknown}" \
+    "${OPENCLAW_LIVE_CLI_BACKEND_MODEL:-unknown}" \
+    "$detail" \
+    >> "$_LLM_LOG" 2>/dev/null || true
+}
+
+# ── In-container input sanitization ──────────────────────────────────────
+_sanitize_llm_input() {
+  local raw="$1"
+  local sanitized
+  sanitized="$(printf '%s' "$raw" \
+    | tr -d '\000-\010\013\014\016-\037\177' \
+    | grep -Ev '^\s*(eval|exec|subprocess|shell=True|bash\s+-c|sh\s+-c)\b' \
+    || true)"
+  printf '%s' "$sanitized"
+}
+
+# ── In-container response sanitization ───────────────────────────────────
+_sanitize_llm_response() {
+  local raw="$1"
+  local sanitized
+  sanitized="$(printf '%s' "$raw" \
+    | grep -Ev '^\s*(eval|exec|subprocess|shell=True|bash\s+-c|sh\s+-c)\b' \
+    || true)"
+  printf '%s' "$sanitized"
+}
+
 IFS=',' read -r -a auth_dirs <<<"${OPENCLAW_DOCKER_AUTH_DIRS_RESOLVED:-}"
 IFS=',' read -r -a auth_files <<<"${OPENCLAW_DOCKER_AUTH_FILES_RESOLVED:-}"
 if ((${#auth_dirs[@]} > 0)); then
   for auth_dir in "${auth_dirs[@]}"; do
     [ -n "$auth_dir" ] || continue
+    # Prevent path traversal
+    if [[ "$auth_dir" == *".."* ]]; then
+      echo "ERROR: auth_dir contains path traversal: $auth_dir" >&2
+      exit 1
+    fi
     if [ -d "/host-auth/$auth_dir" ]; then
       mkdir -p "$HOME/$auth_dir"
       cp -R "/host-auth/$auth_dir/." "$HOME/$auth_dir"
@@ -179,6 +340,11 @@ fi
 if ((${#auth_files[@]} > 0)); then
   for auth_file in "${auth_files[@]}"; do
     [ -n "$auth_file" ] || continue
+    # Prevent path traversal
+    if [[ "$auth_file" == *".."* ]]; then
+      echo "ERROR: auth_file contains path traversal: $auth_file" >&2
+      exit 1
+    fi
     if [ -f "/host-auth-files/$auth_file" ]; then
       mkdir -p "$(dirname "$HOME/$auth_file")"
       cp "/host-auth-files/$auth_file" "$HOME/$auth_file"
@@ -190,6 +356,22 @@ provider="${OPENCLAW_DOCKER_CLI_BACKEND_PROVIDER:-claude-cli}"
 default_command="${OPENCLAW_DOCKER_CLI_BACKEND_COMMAND_DEFAULT:-}"
 docker_package="${OPENCLAW_DOCKER_CLI_BACKEND_NPM_PACKAGE:-}"
 binary_name="${OPENCLAW_DOCKER_CLI_BACKEND_BINARY_NAME:-}"
+
+# Validate provider against approved list inside container
+_APPROVED_PROVIDERS="claude-cli"
+_APPROVED_FOUND=0
+for _ap in $_APPROVED_PROVIDERS; do
+  if [ "$provider" = "$_ap" ]; then
+    _APPROVED_FOUND=1
+    break
+  fi
+done
+if [ "$_APPROVED_FOUND" -ne 1 ]; then
+  echo "WARNING: Provider '$provider' is not on the approved allow-list ($_APPROVED_PROVIDERS)." >&2
+  echo "WARNING: Please replace '$provider' with an approved LLM provider." >&2
+  exit 1
+fi
+
 if [ -z "$binary_name" ] && [ -n "$default_command" ]; then
   binary_name="$(basename "$default_command")"
 fi
@@ -247,7 +429,10 @@ WRAP
   fi
   if [ "$auth_mode" = "subscription" ]; then
     claude --version
-    direct_token="OPENCLAW-CLAUDE-SUBSCRIPTION-DIRECT"
+    # Sanitize the probe token before sending to LLM
+    _raw_direct_token="OPENCLAW-CLAUDE-SUBSCRIPTION-DIRECT"
+    direct_token="$(_sanitize_llm_input "$_raw_direct_token")"
+    _log_llm "probe_request" "token=${direct_token}"
     direct_output="$(
       claude \
         -p "Reply exactly: $direct_token" \
@@ -259,6 +444,9 @@ WRAP
         --mcp-config '{"mcpServers":{}}' \
         --no-session-persistence
     )"
+    # Sanitize and validate LLM response
+    direct_output="$(_sanitize_llm_response "$direct_output")"
+    _log_llm "probe_response" "length=${#direct_output}"
     if [[ "$direct_output" != *"$direct_token"* ]]; then
       echo "ERROR: direct Claude subscription probe did not return expected token." >&2
       echo "$direct_output" >&2
@@ -287,7 +475,9 @@ openclaw_live_link_runtime_tree "$tmp_dir"
 openclaw_live_stage_state_dir "$tmp_dir/.openclaw-state"
 openclaw_live_prepare_staged_config
 cd "$tmp_dir"
+_log_llm "test_run_start" "test=gateway-cli-backend.live.test.ts"
 pnpm test:live src/gateway/gateway-cli-backend.live.test.ts
+_log_llm "test_run_end" "test=gateway-cli-backend.live.test.ts"
 EOF
 
 if [[ "${OPENCLAW_SKIP_DOCKER_BUILD:-}" == "1" ]]; then
@@ -307,6 +497,10 @@ if [[ "$CLI_PROVIDER" == "claude-cli" && "$CLI_AUTH_MODE" == "subscription" ]]; 
 fi
 echo "==> External auth dirs: ${AUTH_DIRS_CSV:-none}"
 echo "==> External auth files: ${AUTH_FILES_CSV:-none}"
+
+# Log the outbound LLM interaction attempt
+_log_llm_interaction "docker_run_start" "image=${LIVE_IMAGE_NAME}"
+
 DOCKER_AUTH_ENV=(
   -e OPENCLAW_LIVE_CLI_BACKEND_AUTH="$CLI_AUTH_MODE"
 )
@@ -363,3 +557,5 @@ docker run --rm -t \
   "${PROFILE_MOUNT[@]}" \
   "$LIVE_IMAGE_NAME" \
   -lc "$LIVE_TEST_CMD"
+
+_log_llm_interaction "docker_run_end" "image=${LIVE_IMAGE_NAME}"
