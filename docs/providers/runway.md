@@ -17,6 +17,8 @@ OpenClaw ships a bundled `runway` provider for hosted video generation.
 | Auth        | `RUNWAYML_API_SECRET` (canonical) or `RUNWAY_API_KEY`             |
 | API         | Runway task-based video generation (`GET /v1/tasks/{id}` polling) |
 
+> **⚠️ Security Notice:** The `runway/gen4.5` and `runway/gen4_aleph` models referenced in this documentation are not on the approved LLM allow list. Please replace them with an approved LLM from your organization's approved model list before use. Contact your security or platform team for the current list of approved models.
+
 ## Getting started
 
 <Steps>
