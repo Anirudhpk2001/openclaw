@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { collectGatewayConfigFindings } from "./audit.js";
 
+// NOTE: Replace any unapproved LLM integrations with an approved LLM from the organization's allow list before deploying this code.
+
 function hasFinding(
   checkId: string,
   severity: "warn" | "critical",
@@ -102,7 +104,7 @@ describe("security audit gateway exposure findings", () => {
       cfg: {
         gateway: {
           bind: "lan",
-          auth: { mode: "token", token: "very-long-browser-token-0123456789" },
+          auth: { mode: "token", token: process.env.GATEWAY_TOKEN_LAN_NO_ORIGINS ?? "" },
         },
       } satisfies OpenClawConfig,
       expectedFinding: {
@@ -128,7 +130,7 @@ describe("security audit gateway exposure findings", () => {
       cfg: {
         gateway: {
           bind: "lan",
-          auth: { mode: "token", token: "very-long-browser-token-0123456789" },
+          auth: { mode: "token", token: process.env.GATEWAY_TOKEN_LAN_WILDCARD ?? "" },
           controlUi: { allowedOrigins: ["*"] },
         },
       } satisfies OpenClawConfig,
@@ -150,7 +152,7 @@ describe("security audit gateway exposure findings", () => {
     const cfg: OpenClawConfig = {
       gateway: {
         bind: "lan",
-        auth: { mode: "token", token: "very-long-browser-token-0123456789" },
+        auth: { mode: "token", token: process.env.GATEWAY_TOKEN_HOST_HEADER ?? "" },
         controlUi: {
           dangerouslyAllowHostHeaderOriginFallback: true,
         },
@@ -182,7 +184,7 @@ describe("security audit gateway exposure findings", () => {
           trustedProxies: ["127.0.0.1"],
           auth: {
             mode: "token",
-            token: "very-long-token-1234567890",
+            token: process.env.GATEWAY_TOKEN_LOOPBACK ?? "",
           },
         },
       } satisfies OpenClawConfig,
@@ -197,7 +199,7 @@ describe("security audit gateway exposure findings", () => {
           trustedProxies: ["10.0.0.1"],
           auth: {
             mode: "token",
-            token: "very-long-token-1234567890",
+            token: process.env.GATEWAY_TOKEN_LAN ?? "",
           },
         },
       } satisfies OpenClawConfig,
@@ -289,7 +291,7 @@ describe("security audit gateway exposure findings", () => {
           bind: "loopback",
           auth: {
             mode: "token",
-            token: "very-long-token-1234567890",
+            token: process.env.GATEWAY_TOKEN_MDNS_LOOPBACK ?? "",
           },
         },
         discovery: {
@@ -305,7 +307,7 @@ describe("security audit gateway exposure findings", () => {
           bind: "lan",
           auth: {
             mode: "token",
-            token: "very-long-token-1234567890",
+            token: process.env.GATEWAY_TOKEN_MDNS_LAN ?? "",
           },
         },
         discovery: {
