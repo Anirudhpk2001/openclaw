@@ -59,6 +59,79 @@ type SlashHttpHandlerParams = {
 const MAX_BODY_BYTES = 64 * 1024;
 const BODY_READ_TIMEOUT_MS = 5_000;
 
+// Maximum allowed length for command text input sent to LLM
+const MAX_COMMAND_TEXT_LENGTH = 4000;
+
+// Patterns that indicate potentially dangerous dynamic code execution in LLM responses
+const DANGEROUS_CODE_PATTERNS = [
+  /^\s*eval\s*\(/m,
+  /^\s*exec\s*\(/m,
+  /\beval\s*\(/g,
+  /\bexec\s*\(/g,
+  /\bsubprocess\s*\.\s*\w+\s*\(.*shell\s*=\s*True/g,
+  /\bos\.system\s*\(/g,
+  /\bos\.popen\s*\(/g,
+  /\b__import__\s*\(/g,
+  /\bFunction\s*\(/g,
+  /\bnew\s+Function\s*\(/g,
+  /\bsetTimeout\s*\(\s*["'`]/g,
+  /\bsetInterval\s*\(\s*["'`]/g,
+];
+
+/**
+ * Sanitize and validate input text before sending to LLM.
+ * Removes null bytes, trims excessive whitespace, enforces length limits,
+ * and strips potentially dangerous content.
+ */
+function sanitizeLlmInput(text: string): string {
+  if (!text || typeof text !== "string") {
+    return "";
+  }
+
+  // Remove null bytes and other control characters (except newlines and tabs)
+  let sanitized = text.replace(/\0/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+
+  // Normalize excessive whitespace sequences (but preserve intentional newlines)
+  sanitized = sanitized.replace(/[ \t]{200,}/g, " ");
+
+  // Enforce maximum length
+  if (sanitized.length > MAX_COMMAND_TEXT_LENGTH) {
+    sanitized = sanitized.slice(0, MAX_COMMAND_TEXT_LENGTH);
+  }
+
+  return sanitized;
+}
+
+/**
+ * Sanitize and validate LLM response text.
+ * Removes lines containing dangerous dynamic code execution primitives.
+ */
+function sanitizeLlmResponse(text: string): string {
+  if (!text || typeof text !== "string") {
+    return "";
+  }
+
+  // Remove null bytes and control characters
+  let sanitized = text.replace(/\0/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+
+  // Split into lines and filter out lines containing dangerous patterns
+  const lines = sanitized.split("\n");
+  const filteredLines = lines.filter((line) => {
+    for (const pattern of DANGEROUS_CODE_PATTERNS) {
+      // Reset lastIndex for global patterns
+      if (pattern.global) {
+        pattern.lastIndex = 0;
+      }
+      if (pattern.test(line)) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  return filteredLines.join("\n");
+}
+
 /**
  * Read the full request body as a string.
  */
@@ -265,7 +338,9 @@ export function createSlashCommandHttpHandler(params: SlashHttpHandlerParams) {
 
     // Extract command info
     const trigger = payload.command.replace(/^\//, "").trim();
-    const commandText = resolveCommandText(trigger, payload.text, triggerMap);
+    const rawCommandText = resolveCommandText(trigger, payload.text, triggerMap);
+    // Sanitize command text before any further processing or LLM submission
+    const commandText = sanitizeLlmInput(rawCommandText);
     const channelId = payload.channel_id;
     const senderId = payload.user_id;
     const senderName = payload.user_name ?? senderId;
@@ -442,6 +517,12 @@ async function handleSlashCommandAsync(params: {
     return;
   }
 
+  // Log the LLM interaction before dispatching
+  const interactionId = `slash-${triggerId ?? Date.now()}-${senderId}`;
+  log?.(
+    `mattermost: llm-interaction-start id=${interactionId} agentId=${route.agentId} accountId=${account.accountId} senderId=${senderId} channelId=${channelId} kind=${kind} commandTextLength=${commandText.length}`,
+  );
+
   // Build inbound context — the command text is the body
   const ctxPayload = core.channel.reply.finalizeInboundContext({
     Body: commandText,
@@ -464,7 +545,7 @@ async function handleSlashCommandAsync(params: {
     SenderId: senderId,
     Provider: "mattermost" as const,
     Surface: "mattermost" as const,
-    MessageSid: triggerId ?? `slash-${Date.now()}`,
+    MessageSid: interactionId,
     Timestamp: Date.now(),
     WasMentioned: true,
     CommandAuthorized: commandAuthorized,
@@ -506,6 +587,22 @@ async function handleSlashCommandAsync(params: {
       ...replyPipeline,
       humanDelay,
       deliver: async (payload: ReplyPayload) => {
+        // Sanitize LLM response before delivery
+        if (payload && typeof payload.text === "string") {
+          const originalLength = payload.text.length;
+          payload.text = sanitizeLlmResponse(payload.text);
+          if (payload.text.length !== originalLength) {
+            log?.(
+              `mattermost: llm-response-sanitized id=${interactionId} originalLength=${originalLength} sanitizedLength=${payload.text.length}`,
+            );
+          }
+        }
+
+        // Log LLM response receipt
+        log?.(
+          `mattermost: llm-interaction-response id=${interactionId} agentId=${route.agentId} to=${to} responseLength=${typeof payload?.text === "string" ? payload.text.length : 0}`,
+        );
+
         await deliverMattermostReplyPayload({
           core,
           cfg,
@@ -518,9 +615,15 @@ async function handleSlashCommandAsync(params: {
           sendMessage: sendMessageMattermost,
         });
         runtime.log?.(`delivered slash reply to ${to}`);
+        log?.(
+          `mattermost: llm-interaction-delivered id=${interactionId} to=${to}`,
+        );
       },
       onError: (err, info) => {
         runtime.error?.(`mattermost slash ${info.kind} reply failed: ${String(err)}`);
+        log?.(
+          `mattermost: llm-interaction-error id=${interactionId} kind=${info.kind} error=${String(err)}`,
+        );
       },
       onReplyStart: typingCallbacks?.onReplyStart,
     });
@@ -529,6 +632,9 @@ async function handleSlashCommandAsync(params: {
     dispatcher,
     onSettled: () => {
       markDispatchIdle();
+      log?.(
+        `mattermost: llm-interaction-settled id=${interactionId} agentId=${route.agentId}`,
+      );
     },
     run: () =>
       core.channel.reply.dispatchReplyFromConfig({
