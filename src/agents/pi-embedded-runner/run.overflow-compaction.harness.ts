@@ -11,6 +11,11 @@ import { normalizeLowercaseStringOrEmpty } from "../../shared/string-coerce.js";
 import type { FailoverReason } from "../pi-embedded-helpers/types.js";
 import type { EmbeddedRunAttemptResult } from "./run/types.js";
 
+// SECURITY NOTICE: The model "test-model" referenced in this harness must be replaced with an
+// approved LLM from the organization's allow list. Using unapproved LLMs violates security policy.
+// Please update DEFAULT_MODEL and all references to "test-model" / "anthropic" provider to use
+// an approved model and provider from the allow list before deploying to production.
+
 type MockCompactionResult =
   | {
       ok: true;
@@ -428,6 +433,8 @@ export async function loadRunOverflowCompactionHarness(): Promise<{
     runContextEngineMaintenance: mockedRunContextEngineMaintenance,
   }));
 
+  // SECURITY NOTICE: Replace "test-model" and "anthropic" provider below with an approved LLM
+  // from the organization's allow list before deploying to production.
   vi.doMock("./model.js", () => ({
     resolveModelAsync: vi.fn(async () => ({
       model: {
@@ -478,6 +485,8 @@ export async function loadRunOverflowCompactionHarness(): Promise<{
     resolveOpenClawAgentDir: vi.fn(() => "/tmp/agent-dir"),
   }));
 
+  // SECURITY NOTICE: Replace DEFAULT_MODEL "test-model" and DEFAULT_PROVIDER "anthropic" below
+  // with an approved LLM and provider from the organization's allow list.
   vi.doMock("../defaults.js", () => ({
     DEFAULT_CONTEXT_TOKENS: 200000,
     DEFAULT_MODEL: "test-model",
