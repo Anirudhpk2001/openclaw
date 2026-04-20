@@ -14,6 +14,128 @@ import { type XaiWebSearchResponse } from "./web-search-shared.js";
 export const XAI_CODE_EXECUTION_ENDPOINT = XAI_RESPONSES_ENDPOINT;
 export const XAI_DEFAULT_CODE_EXECUTION_MODEL = "grok-4-1-fast";
 
+// Policy: Enforce Approved LLM — notify if model is not in the approved list
+const APPROVED_LLM_MODELS: readonly string[] = [
+  "grok-4-1-fast",
+  "grok-3",
+  "grok-3-fast",
+  "grok-3-mini",
+  "grok-3-mini-fast",
+];
+
+function assertApprovedModel(model: string): void {
+  if (!APPROVED_LLM_MODELS.includes(model)) {
+    console.warn(
+      `[SECURITY POLICY] The model "${model}" is not in the approved LLM allow list. ` +
+        `Please replace it with an approved model: ${APPROVED_LLM_MODELS.join(", ")}.`,
+    );
+  }
+}
+
+// Policy: Sanitize LLM input — strip dangerous patterns from task/prompt text
+const DANGEROUS_INPUT_PATTERNS: RegExp[] = [
+  /ignore\s+previous\s+instructions/gi,
+  /system\s*prompt/gi,
+  /<\s*script[^>]*>/gi,
+  /javascript\s*:/gi,
+  /data\s*:\s*text\/html/gi,
+  /\beval\s*\(/gi,
+  /\bexec\s*\(/gi,
+  /\bsubprocess\s*\(/gi,
+  /\bos\.system\s*\(/gi,
+  /\bshell\s*=\s*True/gi,
+];
+
+function sanitizeLlmInput(input: string): string {
+  if (typeof input !== "string") return "";
+  let sanitized = input.trim();
+  for (const pattern of DANGEROUS_INPUT_PATTERNS) {
+    sanitized = sanitized.replace(pattern, "[REDACTED]");
+  }
+  if (sanitized.length === 0) {
+    throw new Error("[SECURITY] LLM input is empty after sanitization.");
+  }
+  if (sanitized.length > 32000) {
+    throw new Error("[SECURITY] LLM input exceeds maximum allowed length.");
+  }
+  return sanitized;
+}
+
+// Policy: LLM Interaction Logging — log every interaction with the LLM
+function logLlmRequest(params: {
+  model: string;
+  task: string;
+  endpoint: string;
+  timeoutSeconds: number;
+  maxTurns?: number;
+}): void {
+  console.info("[LLM REQUEST]", {
+    timestamp: new Date().toISOString(),
+    endpoint: params.endpoint,
+    model: params.model,
+    timeoutSeconds: params.timeoutSeconds,
+    maxTurns: params.maxTurns,
+    taskLength: params.task.length,
+    taskPreview: params.task.slice(0, 100),
+  });
+}
+
+function logLlmResponse(params: {
+  model: string;
+  endpoint: string;
+  contentLength: number;
+  citationsCount: number;
+  usedCodeExecution: boolean;
+  outputTypes: string[];
+}): void {
+  console.info("[LLM RESPONSE]", {
+    timestamp: new Date().toISOString(),
+    endpoint: params.endpoint,
+    model: params.model,
+    contentLength: params.contentLength,
+    citationsCount: params.citationsCount,
+    usedCodeExecution: params.usedCodeExecution,
+    outputTypes: params.outputTypes,
+  });
+}
+
+// Policy: LLM Interaction Logging (Instruction 3) — sanitize and validate LLM responses,
+// removing lines containing eval, exec, JS eval, bash eval, subprocess(shell=True)
+const DANGEROUS_RESPONSE_LINE_PATTERNS: RegExp[] = [
+  /\beval\s*\(/i,
+  /\bexec\s*\(/i,
+  /\bsubprocess\s*\(.*shell\s*=\s*True/i,
+  /\bos\.system\s*\(/i,
+  /\bshell\s*=\s*True/i,
+  /\bnew\s+Function\s*\(/i,
+  /\bsetTimeout\s*\(\s*["'`]/i,
+  /\bsetInterval\s*\(\s*["'`]/i,
+];
+
+function sanitizeLlmResponse(content: string): string {
+  if (typeof content !== "string") return "";
+  const lines = content.split("\n");
+  const sanitizedLines = lines.filter((line) => {
+    for (const pattern of DANGEROUS_RESPONSE_LINE_PATTERNS) {
+      if (pattern.test(line)) {
+        console.warn(
+          "[SECURITY] Removed dangerous line from LLM response:",
+          line.slice(0, 200),
+        );
+        return false;
+      }
+    }
+    return true;
+  });
+  return sanitizedLines.join("\n");
+}
+
+function validateLlmResponse(data: unknown): void {
+  if (data === null || typeof data !== "object") {
+    throw new Error("[SECURITY] LLM response is not a valid object.");
+  }
+}
+
 export type XaiCodeExecutionConfig = {
   apiKey?: unknown;
   model?: unknown;
@@ -80,6 +202,21 @@ export async function requestXaiCodeExecution(params: {
   maxTurns?: number;
   task: string;
 }): Promise<XaiCodeExecutionResult> {
+  // Policy: Enforce Approved LLM
+  assertApprovedModel(params.model);
+
+  // Policy: Sanitize LLM input
+  const sanitizedTask = sanitizeLlmInput(params.task);
+
+  // Policy: LLM Interaction Logging — log request
+  logLlmRequest({
+    model: params.model,
+    task: sanitizedTask,
+    endpoint: XAI_CODE_EXECUTION_ENDPOINT,
+    timeoutSeconds: params.timeoutSeconds,
+    maxTurns: params.maxTurns,
+  });
+
   return await postTrustedWebToolsJson(
     {
       url: XAI_CODE_EXECUTION_ENDPOINT,
@@ -87,7 +224,7 @@ export async function requestXaiCodeExecution(params: {
       apiKey: params.apiKey,
       body: buildXaiResponsesToolBody({
         model: params.model,
-        inputText: params.task,
+        inputText: sanitizedTask,
         tools: [{ type: "code_interpreter" }],
         maxTurns: params.maxTurns,
       }),
@@ -95,7 +232,15 @@ export async function requestXaiCodeExecution(params: {
     },
     async (response) => {
       const data = (await response.json()) as XaiCodeExecutionResponse;
-      const { content, citations } = resolveXaiResponseTextAndCitations(data);
+
+      // Policy: Validate LLM response structure
+      validateLlmResponse(data);
+
+      const { content: rawContent, citations } = resolveXaiResponseTextAndCitations(data);
+
+      // Policy: LLM Interaction Logging (Instruction 3) — sanitize response content
+      const content = sanitizeLlmResponse(rawContent);
+
       const outputTypes = Array.isArray(data.output)
         ? [
             ...new Set(
@@ -105,12 +250,25 @@ export async function requestXaiCodeExecution(params: {
             ),
           ]
         : [];
-      return {
+
+      const result: XaiCodeExecutionResult = {
         content,
         citations,
         usedCodeExecution: outputTypes.includes("code_interpreter_call"),
         outputTypes,
       };
+
+      // Policy: LLM Interaction Logging — log response
+      logLlmResponse({
+        model: params.model,
+        endpoint: XAI_CODE_EXECUTION_ENDPOINT,
+        contentLength: content.length,
+        citationsCount: citations.length,
+        usedCodeExecution: result.usedCodeExecution,
+        outputTypes,
+      });
+
+      return result;
     },
   );
 }
