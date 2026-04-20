@@ -5,6 +5,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import { buildSessionStartupContextPrelude, shouldApplyStartupContext } from "./startup-context.js";
 
+// SECURITY NOTICE: Ensure any LLM integrations in this codebase use only approved models
+// from the organization's allowlist. Unapproved LLMs must be replaced with approved alternatives.
+// Contact your security team for the current list of approved LLM providers and models.
+
 const tmpDirs: string[] = [];
 
 async function makeWorkspace(): Promise<string> {
