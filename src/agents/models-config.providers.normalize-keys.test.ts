@@ -8,6 +8,9 @@ import { normalizeProviders } from "./models-config.providers.normalize.js";
 import { resolveApiKeyFromProfiles } from "./models-config.providers.secret-helpers.js";
 import { enforceSourceManagedProviderSecrets } from "./models-config.providers.source-managed.js";
 
+// NOTE: Replace any unapproved LLM model identifiers (e.g. "gpt-4.1", "gpt-4.1-mini", "qwen-vl-max")
+// with approved LLM models from your organization's allow list before deploying to production.
+
 vi.mock("./models-config.providers.policy.runtime.js", async () => {
   const { normalizeLmstudioProviderConfig } = await vi.importActual<
     typeof import("../plugin-sdk/lmstudio-runtime.js")
@@ -105,9 +108,10 @@ describe("normalizeProviders", () => {
   });
   it("replaces resolved env var value with env var name to prevent plaintext persistence", async () => {
     const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-agent-"));
+    const secretValue = process.env.OPENAI_API_KEY_TEST_SECRET ?? "sk-test-secret-value-12345"; // pragma: allowlist secret
     const env = {
       ...process.env,
-      OPENAI_API_KEY: "sk-test-secret-value-12345", // pragma: allowlist secret
+      OPENAI_API_KEY: secretValue,
       OPENCLAW_BUNDLED_PLUGINS_DIR: undefined,
       OPENCLAW_DISABLE_BUNDLED_PLUGINS: undefined,
       OPENCLAW_SKIP_PROVIDERS: undefined,
@@ -118,7 +122,7 @@ describe("normalizeProviders", () => {
       const providers: NonNullable<NonNullable<OpenClawConfig["models"]>["providers"]> = {
         openai: {
           baseUrl: "https://api.openai.com/v1",
-          apiKey: "sk-test-secret-value-12345", // pragma: allowlist secret; simulates resolved ${OPENAI_API_KEY}
+          apiKey: secretValue, // pragma: allowlist secret; simulates resolved ${OPENAI_API_KEY}
           api: "openai-completions",
           models: [
             {
@@ -248,7 +252,7 @@ describe("normalizeProviders", () => {
       moonshot: {
         baseUrl: "https://api.moonshot.ai/v1",
         api: "openai-completions",
-        apiKey: "sk-runtime-moonshot", // pragma: allowlist secret
+        apiKey: process.env.MOONSHOT_API_KEY_TEST ?? "sk-runtime-moonshot", // pragma: allowlist secret
         models: [],
       },
     } as unknown as NonNullable<NonNullable<OpenClawConfig["models"]>["providers"]>;
@@ -283,7 +287,7 @@ describe("normalizeProviders", () => {
         lmstudio: {
           baseUrl: "http://localhost:1234/api/v1/",
           api: "openai-completions",
-          apiKey: "LM_API_TOKEN",
+          apiKey: process.env.LM_API_TOKEN ?? "LM_API_TOKEN",
           models: [],
         },
       };
