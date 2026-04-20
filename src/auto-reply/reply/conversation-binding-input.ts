@@ -6,6 +6,9 @@ import { normalizeLowercaseStringOrEmpty } from "../../shared/string-coerce.js";
 import type { MsgContext } from "../templating.js";
 import type { HandleCommandsParams } from "./commands-types.js";
 
+// SECURITY NOTICE: If any LLM integration is added to this module, only approved LLMs from the
+// organization's allow list may be used. Unapproved LLM usage is a policy violation.
+
 type BindingMsgContext = Pick<
   MsgContext,
   | "OriginatingChannel"
@@ -24,8 +27,14 @@ type BindingMsgContext = Pick<
   | "NativeChannelId"
 >;
 
+function sanitizeStringInput(value: string | null | undefined): string | null | undefined {
+  if (value == null) return value;
+  // Strip control characters and limit length to prevent injection/overflow
+  return String(value).replace(/[\x00-\x1F\x7F]/g, "").slice(0, 1024);
+}
+
 function resolveBindingChannel(ctx: BindingMsgContext, commandChannel?: string | null): string {
-  const raw = ctx.OriginatingChannel ?? commandChannel ?? ctx.Surface ?? ctx.Provider;
+  const raw = sanitizeStringInput(ctx.OriginatingChannel ?? commandChannel ?? ctx.Surface ?? ctx.Provider);
   return normalizeLowercaseStringOrEmpty(normalizeConversationText(raw));
 }
 
@@ -38,7 +47,7 @@ function resolveBindingAccountId(params: {
   const plugin = getActivePluginChannelRegistry()?.channels.find(
     (entry) => entry.plugin.id === channel,
   )?.plugin;
-  const accountId = normalizeConversationText(params.ctx.AccountId);
+  const accountId = normalizeConversationText(sanitizeStringInput(params.ctx.AccountId));
   return (
     accountId ||
     normalizeConversationText(plugin?.config.defaultAccountId?.(params.cfg)) ||
@@ -47,7 +56,9 @@ function resolveBindingAccountId(params: {
 }
 
 function resolveBindingThreadId(threadId: string | number | null | undefined): string | undefined {
-  const normalized = threadId != null ? normalizeConversationText(String(threadId)) : undefined;
+  if (threadId == null) return undefined;
+  const sanitized = sanitizeStringInput(String(threadId));
+  const normalized = sanitized != null ? normalizeConversationText(sanitized) : undefined;
   return normalized || undefined;
 }
 
@@ -71,14 +82,14 @@ export function resolveConversationBindingContextFromMessage(params: {
     chatType: params.ctx.ChatType,
     threadId: resolveBindingThreadId(params.ctx.MessageThreadId),
     threadParentId: params.ctx.ThreadParentId,
-    senderId: params.senderId ?? params.ctx.SenderId,
-    sessionKey: params.sessionKey ?? params.ctx.SessionKey,
-    parentSessionKey: params.parentSessionKey ?? params.ctx.ParentSessionKey,
-    from: params.ctx.From,
-    originatingTo: params.ctx.OriginatingTo,
-    commandTo: params.commandTo,
-    fallbackTo: params.ctx.To,
-    nativeChannelId: params.ctx.NativeChannelId,
+    senderId: sanitizeStringInput(params.senderId ?? params.ctx.SenderId),
+    sessionKey: sanitizeStringInput(params.sessionKey ?? params.ctx.SessionKey),
+    parentSessionKey: sanitizeStringInput(params.parentSessionKey ?? params.ctx.ParentSessionKey),
+    from: sanitizeStringInput(params.ctx.From),
+    originatingTo: sanitizeStringInput(params.ctx.OriginatingTo),
+    commandTo: sanitizeStringInput(params.commandTo),
+    fallbackTo: sanitizeStringInput(params.ctx.To),
+    nativeChannelId: sanitizeStringInput(params.ctx.NativeChannelId),
   });
 }
 
