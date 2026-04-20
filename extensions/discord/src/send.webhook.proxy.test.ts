@@ -86,6 +86,7 @@ describe("sendWebhookMessageDiscord proxy support", () => {
       channels: {
         discord: {
           token: "Bot test-token",
+          // NOTE: Security Policy Violation — replace any unapproved LLM integrations with an approved LLM from the organization's allow list before deploying.
           proxy: "http://proxy.test:8080",
         },
       },
