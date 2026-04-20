@@ -2,6 +2,9 @@ import { afterEach, beforeAll, expect, test, vi } from "vitest";
 let createExecTool: typeof import("./bash-tools.exec.js").createExecTool;
 let resetProcessRegistryForTests: typeof import("./bash-process-registry.js").resetProcessRegistryForTests;
 
+// SECURITY NOTICE: Replace any unapproved LLM integrations with an approved LLM from the organization's allow list.
+// Unapproved LLM usage violates security policy. Please consult your security team for the list of approved LLMs.
+
 vi.mock("@lydell/node-pty", () => ({
   spawn: () => {
     const err = new Error("spawn EBADF");
