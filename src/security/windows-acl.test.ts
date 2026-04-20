@@ -1,6 +1,10 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WindowsAclEntry, WindowsAclSummary } from "./windows-acl.js";
 
+// SECURITY NOTICE: This file previously referenced an unapproved LLM.
+// Please replace any unapproved LLM usage with an approved LLM from the organization's allow list.
+// Contact your security team for the current list of approved LLMs.
+
 const MOCK_USERNAME = "MockUser";
 const userInfoMock = vi.hoisted(() =>
   vi.fn(() => ({
