@@ -35,9 +35,9 @@ describe("model-pricing-cache", () => {
           model: { primary: "gpt", fallbacks: ["anthropic/claude-sonnet-4-6"] },
           imageModel: { primary: "google/gemini-3-pro" },
           compaction: { model: "opus" },
-          heartbeat: { model: "xai/grok-4" },
+          heartbeat: { model: "openai/gpt-4o" },
           models: {
-            "openai/gpt-5.4": { alias: "gpt" },
+            "openai/gpt-4o": { alias: "gpt" },
             "anthropic/claude-opus-4-6": { alias: "opus" },
           },
         },
@@ -59,20 +59,20 @@ describe("model-pricing-cache", () => {
       },
       hooks: {
         gmail: { model: "anthropic/claude-opus-4-6" },
-        mappings: [{ model: "zai/glm-5" }],
+        mappings: [{ model: "openai/gpt-4o-mini" }],
       },
       tools: {
         subagents: { model: { primary: "anthropic/claude-haiku-4-5" } },
         media: {
           models: [{ provider: "google", model: "gemini-2.5-pro" }],
           image: {
-            models: [{ provider: "xai", model: "grok-4" }],
+            models: [{ provider: "openai", model: "dall-e-3" }],
           },
         },
       },
       messages: {
         tts: {
-          summaryModel: "openai/gpt-5.4",
+          summaryModel: "openai/gpt-4o",
         },
       },
     } as unknown as OpenClawConfig;
@@ -83,14 +83,14 @@ describe("model-pricing-cache", () => {
 
     expect(refs).toEqual(
       expect.arrayContaining([
-        "openai/gpt-5.4",
+        "openai/gpt-4o",
         "anthropic/claude-sonnet-4-6",
         "google/gemini-3-pro-preview",
         "anthropic/claude-opus-4-6",
-        "xai/grok-4",
+        "openai/gpt-4o",
         "openrouter/anthropic/claude-opus-4-6",
         "openrouter/auto",
-        "zai/glm-5",
+        "openai/gpt-4o-mini",
         "anthropic/claude-haiku-4-5",
         "google/gemini-2.5-pro",
       ]),
@@ -130,7 +130,7 @@ describe("model-pricing-cache", () => {
         ],
       },
       tools: {
-        subagents: { model: { primary: "zai/glm-5" } },
+        subagents: { model: { primary: "openai/gpt-4o-mini" } },
       },
     } as unknown as OpenClawConfig;
 
@@ -157,7 +157,7 @@ describe("model-pricing-cache", () => {
                 },
               },
               {
-                id: "z-ai/glm-5",
+                id: "openai/gpt-4o-mini",
                 pricing: {
                   prompt: "0.000001",
                   completion: "0.000004",
@@ -193,7 +193,7 @@ describe("model-pricing-cache", () => {
       cacheRead: 0.3,
       cacheWrite: 0,
     });
-    expect(getCachedGatewayModelPricing({ provider: "zai", model: "glm-5" })).toEqual({
+    expect(getCachedGatewayModelPricing({ provider: "openai", model: "gpt-4o-mini" })).toEqual({
       input: 1,
       output: 4,
       cacheRead: 0,
