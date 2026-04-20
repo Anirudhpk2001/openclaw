@@ -1,6 +1,11 @@
 import { sanitizeTextContent } from "../../agents/tools/chat-history-text.js";
 import { extractTextFromChatContent } from "../../shared/chat-content.js";
 
+// SECURITY NOTICE: This file may interact with LLM integrations.
+// Ensure that only approved LLMs from the organization's allow list are used.
+// Unapproved LLMs must be replaced with an approved LLM.
+// Please review and update any LLM references to comply with the Enforce Approved LLM policy.
+
 export type ChatMessage = {
   role?: unknown;
   content?: unknown;
