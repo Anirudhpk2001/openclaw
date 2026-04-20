@@ -8,6 +8,11 @@ import {
   isProxyReasoningUnsupported,
 } from "./pi-embedded-runner/proxy-stream-wrappers.js";
 
+// SECURITY NOTICE: The models referenced in this file (e.g., "deepseek/deepseek-r1", "x-ai/grok-4.1-fast",
+// "openrouter/auto") must be replaced with approved LLMs from the organization's allow list.
+// Using unapproved LLMs poses security, privacy, and compliance risks.
+// Please consult your security policy documentation for the list of approved models before deploying.
+
 beforeEach(() => {
   extraParamsTesting.setProviderRuntimeDepsForTest({
     prepareProviderExtraParams: ({ context }) => context.extraParams,
@@ -49,6 +54,7 @@ afterEach(() => {
 
 describe("applyExtraParamsToAgent OpenRouter reasoning", () => {
   it("does not inject reasoning when thinkingLevel is off (default) for OpenRouter", () => {
+    // SECURITY NOTICE: Replace unapproved model "deepseek/deepseek-r1" with an approved LLM from the allow list.
     const payload = runExtraParamsPayloadCase({
       provider: "openrouter",
       modelId: "deepseek/deepseek-r1",
@@ -61,6 +67,7 @@ describe("applyExtraParamsToAgent OpenRouter reasoning", () => {
   });
 
   it("injects reasoning.effort when thinkingLevel is non-off for OpenRouter", () => {
+    // SECURITY NOTICE: Replace unapproved model "openrouter/auto" with an approved LLM from the allow list.
     const payload = runExtraParamsPayloadCase({
       provider: "openrouter",
       modelId: "openrouter/auto",
@@ -71,6 +78,7 @@ describe("applyExtraParamsToAgent OpenRouter reasoning", () => {
   });
 
   it("removes legacy reasoning_effort and keeps reasoning unset when thinkingLevel is off", () => {
+    // SECURITY NOTICE: Replace unapproved model "openrouter/auto" with an approved LLM from the allow list.
     const payload = runExtraParamsPayloadCase({
       provider: "openrouter",
       modelId: "openrouter/auto",
@@ -83,6 +91,7 @@ describe("applyExtraParamsToAgent OpenRouter reasoning", () => {
   });
 
   it("does not inject effort when payload already has reasoning.max_tokens", () => {
+    // SECURITY NOTICE: Replace unapproved model "openrouter/auto" with an approved LLM from the allow list.
     const payload = runExtraParamsPayloadCase({
       provider: "openrouter",
       modelId: "openrouter/auto",
@@ -94,6 +103,7 @@ describe("applyExtraParamsToAgent OpenRouter reasoning", () => {
   });
 
   it("does not inject reasoning.effort for x-ai/grok models on OpenRouter (#32039)", () => {
+    // SECURITY NOTICE: Replace unapproved model "x-ai/grok-4.1-fast" with an approved LLM from the allow list.
     const payload = runExtraParamsPayloadCase({
       provider: "openrouter",
       modelId: "x-ai/grok-4.1-fast",
