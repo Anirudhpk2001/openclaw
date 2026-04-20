@@ -18,6 +18,8 @@ import { createNoopThreadBindingManager } from "./monitor/thread-bindings.js";
 
 export type Config = ReturnType<typeof loadConfig>;
 
+// SECURITY NOTICE: The model "anthropic/claude-opus-4-5" is not on the approved LLM allow list.
+// Please replace it with an approved LLM model before deploying this configuration.
 export const BASE_CFG: Config = {
   agents: {
     defaults: {
