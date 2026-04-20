@@ -78,6 +78,7 @@ type GuardedFetchPresetOptions = Omit<
 >;
 
 const DEFAULT_MAX_REDIRECTS = 3;
+const MAX_LOOP_ITERATIONS = 10;
 
 export function withStrictGuardedFetchMode(params: GuardedFetchPresetOptions): GuardedFetchOptions {
   return { ...params, mode: GUARDED_FETCH_MODE.STRICT };
@@ -302,8 +303,11 @@ export async function fetchWithSsrFGuard(params: GuardedFetchOptions): Promise<G
   let currentUrl = params.url;
   let currentInit = params.init ? { ...params.init } : undefined;
   let redirectCount = 0;
+  let iterationCount = 0;
 
-  while (true) {
+  while (iterationCount < MAX_LOOP_ITERATIONS) {
+    iterationCount += 1;
+
     let parsedUrl: URL;
     try {
       parsedUrl = new URL(currentUrl);
@@ -391,6 +395,10 @@ export async function fetchWithSsrFGuard(params: GuardedFetchOptions): Promise<G
           throw new Error(`Too many redirects (limit: ${maxRedirects})`);
         }
         const nextParsedUrl = new URL(location, parsedUrl);
+        if (!["http:", "https:"].includes(nextParsedUrl.protocol)) {
+          await release(dispatcher);
+          throw new Error("Invalid redirect URL: must be http or https");
+        }
         const nextUrl = nextParsedUrl.toString();
         if (visited.has(nextUrl)) {
           await release(dispatcher);
@@ -427,4 +435,7 @@ export async function fetchWithSsrFGuard(params: GuardedFetchOptions): Promise<G
       throw err;
     }
   }
+
+  await release();
+  throw new Error(`Exceeded maximum fetch iterations (limit: ${MAX_LOOP_ITERATIONS})`);
 }
