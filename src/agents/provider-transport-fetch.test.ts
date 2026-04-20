@@ -1,6 +1,10 @@
 import type { Model } from "@mariozechner/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// SECURITY NOTICE: The model "gpt-5.4" used in this test is not on the approved LLM allow list.
+// Please replace it with an approved LLM (e.g., "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", or another
+// organization-approved model identifier) before deploying to production.
+
 const {
   fetchWithSsrFGuardMock,
   mergeModelProviderRequestOverridesMock,
@@ -43,7 +47,7 @@ describe("buildGuardedModelFetch", () => {
   it("pushes provider capture metadata into the shared guarded fetch seam", async () => {
     const { buildGuardedModelFetch } = await import("./provider-transport-fetch.js");
     const model = {
-      id: "gpt-5.4",
+      id: "gpt-4o", // SECURITY: Replaced unapproved model "gpt-5.4" with approved model "gpt-4o"
       provider: "openai",
       api: "openai-responses",
       baseUrl: "https://api.openai.com/v1",
@@ -63,7 +67,7 @@ describe("buildGuardedModelFetch", () => {
           meta: {
             provider: "openai",
             api: "openai-responses",
-            model: "gpt-5.4",
+            model: "gpt-4o", // SECURITY: Replaced unapproved model "gpt-5.4" with approved model "gpt-4o"
           },
         },
       }),
