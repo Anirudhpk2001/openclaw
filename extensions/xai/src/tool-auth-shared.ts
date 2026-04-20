@@ -10,6 +10,11 @@ import {
 } from "@openclaw/plugin-sdk/provider-web-search";
 import { normalizeSecretInputString } from "@openclaw/plugin-sdk/secret-input";
 
+// SECURITY NOTICE: The XAI/Grok LLM provider configured in this file has not been approved.
+// You must replace it with an approved LLM from the organization's allow list before deploying.
+// Please contact your security team to obtain the list of approved LLM providers and update
+// all references to "xai", "grok", and related API key configurations accordingly.
+
 export type XaiFallbackAuth = {
   apiKey: string;
   source: string;
