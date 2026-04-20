@@ -67,7 +67,7 @@ async function resolveCliEntrypointPathForService(): Promise<string> {
   }
 
   throw new Error(
-    `Cannot find built CLI at ${distCandidates.join(" or ")}. Run "pnpm build" first, or use dev mode.`,
+    `Cannot find built CLI. Run "pnpm build" first, or use dev mode.`,
   );
 }
 
@@ -157,6 +157,9 @@ async function resolveNodePath(): Promise<string> {
 }
 
 async function resolveBinaryPath(binary: string): Promise<string> {
+  if (!/^[a-zA-Z0-9_-]+$/.test(binary)) {
+    throw new Error(`Invalid binary name: ${binary}`);
+  }
   const { execFileSync } = await import("node:child_process");
   const cmd = process.platform === "win32" ? "where" : "which";
   try {
@@ -165,8 +168,12 @@ async function resolveBinaryPath(binary: string): Promise<string> {
     if (!resolved) {
       throw new Error("empty");
     }
-    await fs.access(resolved);
-    return resolved;
+    const resolvedNormalized = path.normalize(resolved);
+    if (resolvedNormalized !== resolved && resolvedNormalized !== path.resolve(resolved)) {
+      throw new Error("Suspicious binary path detected");
+    }
+    await fs.access(resolvedNormalized);
+    return resolvedNormalized;
   } catch {
     if (binary === "bun") {
       throw new Error("Bun not found in PATH. Install bun: https://bun.sh");
@@ -174,6 +181,39 @@ async function resolveBinaryPath(binary: string): Promise<string> {
     throw new Error(
       "Node not found in PATH. Install Node 24 (recommended) or Node 22 LTS (22.14+).",
     );
+  }
+}
+
+function validatePort(port: number): void {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("Invalid port number");
+  }
+}
+
+function validateHost(host: string): void {
+  if (!/^[a-zA-Z0-9._:[\]-]+$/.test(host)) {
+    throw new Error("Invalid host value");
+  }
+}
+
+function validateFingerprint(fingerprint: string): void {
+  if (!/^[a-fA-F0-9:]+$/.test(fingerprint)) {
+    throw new Error("Invalid TLS fingerprint value");
+  }
+}
+
+function validateNodeId(nodeId: string): void {
+  if (!/^[a-zA-Z0-9_-]+$/.test(nodeId)) {
+    throw new Error("Invalid node ID value");
+  }
+}
+
+function validateDisplayName(displayName: string): void {
+  if (displayName.length > 256) {
+    throw new Error("Display name too long");
+  }
+  if (/[\x00-\x1f\x7f]/.test(displayName)) {
+    throw new Error("Invalid characters in display name");
   }
 }
 
@@ -256,6 +296,7 @@ export async function resolveGatewayProgramArguments(params: {
   runtime?: GatewayRuntimePreference;
   nodePath?: string;
 }): Promise<GatewayProgramArgs> {
+  validatePort(params.port);
   const gatewayArgs = ["gateway", "--port", String(params.port)];
   return resolveCliProgramArguments({
     args: gatewayArgs,
@@ -276,6 +317,17 @@ export async function resolveNodeProgramArguments(params: {
   runtime?: GatewayRuntimePreference;
   nodePath?: string;
 }): Promise<GatewayProgramArgs> {
+  validateHost(params.host);
+  validatePort(params.port);
+  if (params.tlsFingerprint) {
+    validateFingerprint(params.tlsFingerprint);
+  }
+  if (params.nodeId) {
+    validateNodeId(params.nodeId);
+  }
+  if (params.displayName) {
+    validateDisplayName(params.displayName);
+  }
   const args = ["node", "run", "--host", params.host, "--port", String(params.port)];
   if (params.tls || params.tlsFingerprint) {
     args.push("--tls");
