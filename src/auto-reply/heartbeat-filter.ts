@@ -4,12 +4,23 @@ const HEARTBEAT_TASK_PROMPT_PREFIX =
   "Run the following periodic tasks (only those due based on their intervals):";
 const HEARTBEAT_TASK_PROMPT_ACK = "After completing all due tasks, reply HEARTBEAT_OK.";
 
+const MAX_CONTENT_LENGTH = 1_000_000;
+const MAX_ARRAY_LENGTH = 10_000;
+
+function sanitizeText(text: string): string {
+  return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+}
+
 function resolveMessageText(content: unknown): { text: string; hasNonTextContent: boolean } {
   if (typeof content === "string") {
-    return { text: content, hasNonTextContent: false };
+    const truncated = content.length > MAX_CONTENT_LENGTH ? content.slice(0, MAX_CONTENT_LENGTH) : content;
+    return { text: sanitizeText(truncated), hasNonTextContent: false };
   }
   if (!Array.isArray(content)) {
     return { text: "", hasNonTextContent: content != null };
+  }
+  if (content.length > MAX_ARRAY_LENGTH) {
+    return { text: "", hasNonTextContent: true };
   }
   let hasNonTextContent = false;
   const text = content
@@ -28,7 +39,10 @@ function resolveMessageText(content: unknown): { text: string; hasNonTextContent
       }
       return true;
     })
-    .map((block) => block.text)
+    .map((block) => {
+      const t = block.text.length > MAX_CONTENT_LENGTH ? block.text.slice(0, MAX_CONTENT_LENGTH) : block.text;
+      return sanitizeText(t);
+    })
     .join("");
   return { text, hasNonTextContent };
 }
