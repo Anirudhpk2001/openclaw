@@ -36,6 +36,313 @@ const CONNECT_TIMEOUT_MS = 90_000;
 const LIVE_TIMEOUT_MS = 240_000;
 type LiveAcpAgent = "claude" | "codex" | "gemini";
 
+// ── Security helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Instruction 1 – Remove suspicious prompts / commands from uploaded file content.
+ * Replaces shell commands, executables, base64-encoded commands and leet-speak
+ * variants with the literal string <suspicious_content_removed>.
+ */
+function sanitizeUploadedFileContent(content: string): string {
+  // Known dangerous commands (including the mandatory list)
+  const suspiciousPatterns: RegExp[] = [
+    // mandatory list
+    /\balias\b/gi,
+    /\bripgrep\b|\brg\b/gi,
+    /\bcurl\b/gi,
+    /\brm\b/gi,
+    /\becho\b/gi,
+    /\bdd\b(?=\s)/gi,
+    /\bgit\b/gi,
+    /\btar\b/gi,
+    /\bchmod\b/gi,
+    /\bchown\b/gi,
+    /\bfsck\b/gi,
+    // common shell / system commands
+    /\bsudo\b/gi,
+    /\bsu\b(?=\s)/gi,
+    /\bwget\b/gi,
+    /\bnc\b(?=\s)/gi,
+    /\bnetcat\b/gi,
+    /\bpython[23]?\b/gi,
+    /\bperl\b/gi,
+    /\bruby\b/gi,
+    /\bnode\b/gi,
+    /\bbash\b/gi,
+    /\bsh\b(?=\s)/gi,
+    /\bzsh\b/gi,
+    /\bpowershell\b/gi,
+    /\bcmd\.exe\b/gi,
+    /\beval\b/gi,
+    /\bexec\b/gi,
+    /\bsystem\b/gi,
+    /\bspawn\b/gi,
+    /\bpopen\b/gi,
+    /\bsubprocess\b/gi,
+    /\bos\.system\b/gi,
+    /\bos\.popen\b/gi,
+    /\bpasswd\b/gi,
+    /\bssh\b/gi,
+    /\bscp\b/gi,
+    /\bsftp\b/gi,
+    /\bftp\b/gi,
+    /\bnmap\b/gi,
+    /\bping\b/gi,
+    /\bifconfig\b/gi,
+    /\bipconfig\b/gi,
+    /\bnetstat\b/gi,
+    /\bkill\b/gi,
+    /\bkillall\b/gi,
+    /\bpkill\b/gi,
+    /\bcrontab\b/gi,
+    /\bat\b(?=\s)/gi,
+    /\bawk\b/gi,
+    /\bsed\b/gi,
+    /\bgrep\b/gi,
+    /\bfind\b(?=\s)/gi,
+    /\bxargs\b/gi,
+    /\btee\b(?=\s)/gi,
+    /\bcat\b(?=\s)/gi,
+    /\bmore\b(?=\s)/gi,
+    /\bless\b(?=\s)/gi,
+    /\bhead\b(?=\s)/gi,
+    /\btail\b(?=\s)/gi,
+    /\btouch\b/gi,
+    /\bmkdir\b/gi,
+    /\brmdir\b/gi,
+    /\bcp\b(?=\s)/gi,
+    /\bmv\b(?=\s)/gi,
+    /\bln\b(?=\s)/gi,
+    /\bls\b(?=\s)/gi,
+    /\bdir\b(?=\s)/gi,
+    /\bwhoami\b/gi,
+    /\bid\b(?=\s)/gi,
+    /\buname\b/gi,
+    /\bhostname\b/gi,
+    /\benv\b(?=\s)/gi,
+    /\bset\b(?=\s)/gi,
+    /\bexport\b/gi,
+    /\bunset\b/gi,
+    /\bsource\b/gi,
+    /\bdot\b(?=\s)/gi,
+    /\bhistory\b/gi,
+    /\bjobs\b(?=\s)/gi,
+    /\bbg\b(?=\s)/gi,
+    /\bfg\b(?=\s)/gi,
+    /\bnohup\b/gi,
+    /\bdisown\b/gi,
+    /\bscreen\b/gi,
+    /\btmux\b/gi,
+    /\bstrace\b/gi,
+    /\bltrace\b/gi,
+    /\bgdb\b/gi,
+    /\bobjdump\b/gi,
+    /\bnm\b(?=\s)/gi,
+    /\bstrings\b/gi,
+    /\bfile\b(?=\s)/gi,
+    /\bldd\b/gi,
+    /\bldconfig\b/gi,
+    /\binsmod\b/gi,
+    /\brmmod\b/gi,
+    /\bmodprobe\b/gi,
+    /\bmount\b/gi,
+    /\bumount\b/gi,
+    /\bfdisk\b/gi,
+    /\bparted\b/gi,
+    /\bmkfs\b/gi,
+    /\bformat\b/gi,
+    /\bdiskpart\b/gi,
+    /\bregedit\b/gi,
+    /\bsc\b(?=\s)/gi,
+    /\bnet\b(?=\s)/gi,
+    /\bwmic\b/gi,
+    /\btaskkill\b/gi,
+    /\btasklist\b/gi,
+    // base64-encoded content (heuristic: long base64 strings)
+    /(?:[A-Za-z0-9+/]{40,}={0,2})/g,
+    // leet-speak variants of common commands
+    /\b3ch0\b/gi,
+    /\bc4t\b/gi,
+    /\br00t\b/gi,
+    /\bsh3ll\b/gi,
+    /\bexpl0it\b/gi,
+    /\bh4ck\b/gi,
+    /\bp4sswd\b/gi,
+    /\bsyst3m\b/gi,
+    /\bexe[c4]\b/gi,
+  ];
+
+  let sanitized = content;
+  for (const pattern of suspiciousPatterns) {
+    sanitized = sanitized.replace(pattern, "<suspicious_content_removed>");
+  }
+  return sanitized;
+}
+
+/**
+ * Instruction 2 – Sanitize LLM responses: remove lines containing dynamic
+ * code-execution primitives (eval, exec, bash eval, subprocess(shell=True)).
+ */
+function sanitizeLlmResponse(text: string): string {
+  const dangerousLinePatterns: RegExp[] = [
+    /\beval\s*\(/i,
+    /\beval\s+/i,
+    /\bexec\s*\(/i,
+    /\bexec\s+/i,
+    /\bsubprocess\s*\.\s*\w+\s*\(.*shell\s*=\s*True/i,
+    /\bos\s*\.\s*system\s*\(/i,
+    /\bos\s*\.\s*popen\s*\(/i,
+    /\bspawn\s*\(/i,
+    /\bpopen\s*\(/i,
+    /\bnew\s+Function\s*\(/i,
+    /\bsetTimeout\s*\(\s*["'`]/i,
+    /\bsetInterval\s*\(\s*["'`]/i,
+    /\bFunction\s*\(\s*["'`]/i,
+    /\bimportlib\s*\.\s*import_module\s*\(/i,
+    /\b__import__\s*\(/i,
+    /\bcompile\s*\(.*exec/i,
+  ];
+
+  const lines = text.split("\n");
+  const filtered = lines.filter((line) => {
+    for (const pattern of dangerousLinePatterns) {
+      if (pattern.test(line)) {
+        console.warn(`[security] removed dangerous LLM response line: ${line.slice(0, 120)}`);
+        return false;
+      }
+    }
+    return true;
+  });
+  return filtered.join("\n");
+}
+
+/**
+ * Instruction 3 & 6 – Redact Singapore PII and general PII from uploaded file content.
+ */
+function redactPiiFromContent(content: string): string {
+  // Singapore NRIC / FIN (S/T/F/G followed by 7 digits and a letter)
+  let redacted = content.replace(/\b[STFG]\d{7}[A-Z]\b/gi, "REDACTED");
+  // Passport numbers (generic: letter(s) + digits)
+  redacted = redacted.replace(/\b[A-Z]{1,2}\d{6,9}\b/g, "REDACTED");
+  // Singapore phone numbers (+65 or local 8-digit starting with 6/8/9)
+  redacted = redacted.replace(/(?:\+65[\s-]?)?\b[689]\d{7}\b/g, "REDACTED");
+  // Email addresses
+  redacted = redacted.replace(/\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/g, "REDACTED");
+  // Credit / debit card numbers (13-19 digits, optionally space/dash separated)
+  redacted = redacted.replace(/\b(?:\d[ -]?){13,19}\b/g, "REDACTED");
+  // Bank account numbers (8-20 digits)
+  redacted = redacted.replace(/\b\d{8,20}\b/g, "REDACTED");
+  // IP addresses (v4)
+  redacted = redacted.replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "REDACTED");
+  // MAC addresses
+  redacted = redacted.replace(/\b(?:[0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}\b/g, "REDACTED");
+  // GPS / precise coordinates
+  redacted = redacted.replace(
+    /[-+]?\d{1,3}\.\d{4,},\s*[-+]?\d{1,3}\.\d{4,}/g,
+    "REDACTED",
+  );
+  // Social Security Numbers (US, but also zero-tolerance)
+  redacted = redacted.replace(/\b\d{3}-\d{2}-\d{4}\b/g, "REDACTED");
+  // Dates of birth (common formats)
+  redacted = redacted.replace(
+    /\b(?:0?[1-9]|[12]\d|3[01])[\/\-](?:0?[1-9]|1[0-2])[\/\-](?:19|20)\d{2}\b/g,
+    "REDACTED",
+  );
+  // CPF account numbers (Singapore, 13 digits)
+  redacted = redacted.replace(/\b\d{13}\b/g, "REDACTED");
+  // SingPass / MyInfo identifiers (heuristic: "singpass" or "myinfo" adjacent tokens)
+  redacted = redacted.replace(/(?:singpass|myinfo)\s*[:\-]?\s*\S+/gi, "REDACTED");
+  // Authentication tokens / session identifiers (Bearer tokens)
+  redacted = redacted.replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Bearer REDACTED");
+  // Vehicle Identification Numbers (17 chars alphanumeric)
+  redacted = redacted.replace(/\b[A-HJ-NPR-Z0-9]{17}\b/g, "REDACTED");
+  return redacted;
+}
+
+/**
+ * Instruction 4 – Log every MCP interaction.
+ */
+function logMcpInteraction(direction: "input" | "output", tool: string, data: unknown): void {
+  const preview = JSON.stringify(data)?.slice(0, 500) ?? "<empty>";
+  console.info(`[mcp-log] direction=${direction} tool=${tool} data=${preview}`);
+}
+
+/**
+ * Instruction 5 – Sanitize and validate MCP tool input and output.
+ * Strips dangerous patterns from string values recursively.
+ */
+function sanitizeMcpValue(value: unknown, depth = 0): unknown {
+  if (depth > 10) {
+    return value;
+  }
+  if (typeof value === "string") {
+    // Remove shell injection characters and dangerous sequences
+    let sanitized = value
+      .replace(/[`$]/g, "")
+      .replace(/\|\|/g, "")
+      .replace(/&&/g, "")
+      .replace(/;/g, "")
+      .replace(/\.\.\//g, "")
+      .replace(/\beval\b/gi, "")
+      .replace(/\bexec\b/gi, "")
+      .replace(/\bsubprocess\b/gi, "")
+      .replace(/shell\s*=\s*True/gi, "");
+    sanitized = sanitizeLlmResponse(sanitized);
+    return sanitized;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeMcpValue(item, depth + 1));
+  }
+  if (value !== null && typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      result[k] = sanitizeMcpValue(v, depth + 1);
+    }
+    return result;
+  }
+  return value;
+}
+
+// ── Attachment processing ─────────────────────────────────────────────────────
+
+type Attachment = {
+  mimeType: string;
+  fileName: string;
+  content: string;
+};
+
+function processAttachment(attachment: Attachment): Attachment {
+  // Decode base64 content for text-based inspection where feasible
+  let rawContent: string;
+  try {
+    rawContent = Buffer.from(attachment.content, "base64").toString("utf8");
+  } catch {
+    // Binary content – apply pattern checks on the base64 string itself
+    rawContent = attachment.content;
+  }
+
+  // Apply all content-level security checks
+  let sanitized = sanitizeUploadedFileContent(rawContent);
+  sanitized = redactPiiFromContent(sanitized);
+
+  // Re-encode if we decoded successfully
+  let finalContent: string;
+  try {
+    // Verify it was valid utf8 by checking round-trip
+    const reEncoded = Buffer.from(sanitized, "utf8").toString("base64");
+    finalContent = reEncoded;
+  } catch {
+    finalContent = attachment.content;
+  }
+
+  return {
+    ...attachment,
+    content: finalContent,
+  };
+}
+
+// ── Original helpers (unchanged except where security changes are applied) ────
+
 function createSlackCurrentConversationBindingRegistry() {
   return createTestRegistry([
     {
@@ -75,7 +382,8 @@ function extractAssistantTexts(messages: unknown[]): string[] {
       }
       return extractFirstTextBlock(entry);
     })
-    .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((text) => sanitizeLlmResponse(text));
 }
 
 function createAcpRecallPrompt(liveAgent: LiveAcpAgent): string {
@@ -277,6 +585,12 @@ async function bindConversationAndWait(params: {
       continue;
     }
 
+    // Log MCP interaction for the bind command (Instruction 4)
+    logMcpInteraction("input", "chat.send", {
+      sessionKey: params.sessionKey,
+      message: `/acp spawn ${params.liveAgent} --bind here`,
+    });
+
     await sendChatAndWait({
       client: params.client,
       sessionKey: params.sessionKey,
@@ -292,6 +606,10 @@ async function bindConversationAndWait(params: {
       limit: 16,
     });
     const mainAssistantTexts = extractAssistantTexts(mainHistory.messages ?? []);
+
+    // Log MCP output (Instruction 4)
+    logMcpInteraction("output", "chat.history", { sessionKey: params.sessionKey, mainAssistantTexts });
+
     const spawnedSessionKey = extractSpawnedAcpSessionKey(mainAssistantTexts);
     if (
       mainAssistantTexts.join("\n\n").includes("Bound this conversation to") &&
@@ -345,19 +663,42 @@ async function sendChatAndWait(params: {
     content: string;
   }>;
 }) {
+  // Sanitize and validate MCP input (Instruction 5)
+  const sanitizedMessage = sanitizeMcpValue(params.message) as string;
+
+  // Process attachments: sanitize content and redact PII (Instructions 1, 3, 6)
+  const processedAttachments = params.attachments?.map((att) => processAttachment(att));
+
+  // Log MCP interaction (Instruction 4)
+  logMcpInteraction("input", "chat.send", {
+    sessionKey: params.sessionKey,
+    message: sanitizedMessage,
+    originatingChannel: params.originatingChannel,
+    originatingTo: params.originatingTo,
+    originatingAccountId: params.originatingAccountId,
+    attachmentCount: processedAttachments?.length ?? 0,
+  });
+
   const started: { runId?: string; status?: string } = await params.client.request("chat.send", {
     sessionKey: params.sessionKey,
-    message: params.message,
+    message: sanitizedMessage,
     idempotencyKey: params.idempotencyKey,
     originatingChannel: params.originatingChannel,
     originatingTo: params.originatingTo,
     originatingAccountId: params.originatingAccountId,
-    attachments: params.attachments,
+    attachments: processedAttachments,
   });
-  if (started?.status !== "started" || typeof started.runId !== "string") {
-    throw new Error(`chat.send did not start correctly: ${JSON.stringify(started)}`);
+
+  // Sanitize and validate MCP output (Instruction 5)
+  const sanitizedStarted = sanitizeMcpValue(started) as { runId?: string; status?: string };
+
+  // Log MCP output (Instruction 4)
+  logMcpInteraction("output", "chat.send", sanitizedStarted);
+
+  if (sanitizedStarted?.status !== "started" || typeof sanitizedStarted.runId !== "string") {
+    throw new Error(`chat.send did not start correctly: ${JSON.stringify(sanitizedStarted)}`);
   }
-  await waitForAgentRunOk(params.client, started.runId);
+  await waitForAgentRunOk(params.client, sanitizedStarted.runId);
 }
 
 async function waitForAssistantText(params: {
@@ -378,6 +719,13 @@ async function waitForAssistantText(params: {
     const messages = history.messages ?? [];
     const assistantTexts = extractAssistantTexts(messages);
     const lastAssistantText = assistantTexts.at(-1) ?? null;
+
+    // Log MCP output (Instruction 4)
+    logMcpInteraction("output", "chat.history", {
+      sessionKey: params.sessionKey,
+      assistantCount: assistantTexts.length,
+    });
+
     if (
       assistantTexts.length >= (params.minAssistantCount ?? 1) &&
       lastAssistantText?.includes(params.contains)
@@ -415,6 +763,13 @@ async function waitForAssistantTurn(params: {
     const messages = history.messages ?? [];
     const assistantTexts = extractAssistantTexts(messages);
     const lastAssistantText = assistantTexts.at(-1) ?? null;
+
+    // Log MCP output (Instruction 4)
+    logMcpInteraction("output", "chat.history", {
+      sessionKey: params.sessionKey,
+      assistantCount: assistantTexts.length,
+    });
+
     if (assistantTexts.length >= params.minAssistantCount && lastAssistantText) {
       return { messages, lastAssistantText };
     }
@@ -661,6 +1016,13 @@ describeLive("gateway live (ACP bind)", () => {
         const cronProbe = createLiveCronProbeSpec();
         let cronJobId: string | undefined;
         for (let attempt = 0; attempt < 2; attempt += 1) {
+          // Log MCP interaction for cron tool (Instruction 4)
+          logMcpInteraction("input", "cron.create", {
+            agent: liveAgent,
+            cronName: cronProbe.name,
+            attempt,
+          });
+
           await sendChatAndWait({
             client,
             sessionKey: originalSessionKey,
@@ -683,6 +1045,11 @@ describeLive("gateway live (ACP bind)", () => {
             minAssistantCount: imageAssistantCount + attempt + 1,
             timeoutMs: 90_000,
           });
+
+          // Sanitize and validate MCP cron output (Instruction 5)
+          const sanitizedCronReply = sanitizeMcpValue(cronHistory.lastAssistantText) as string;
+          logMcpInteraction("output", "cron.create", { reply: sanitizedCronReply });
+
           const createdJob = await assertCronJobVisibleViaCli({
             port,
             token,
@@ -691,6 +1058,10 @@ describeLive("gateway live (ACP bind)", () => {
             expectedMessage: cronProbe.message,
           });
           if (createdJob) {
+            // Sanitize and validate MCP cron job output (Instruction 5)
+            const sanitizedJob = sanitizeMcpValue(createdJob) as typeof createdJob;
+            logMcpInteraction("output", "cron.assertVisible", sanitizedJob);
+
             assertCronJobMatches({
               job: createdJob,
               expectedName: cronProbe.name,
@@ -713,10 +1084,14 @@ describeLive("gateway live (ACP bind)", () => {
         if (!cronJobId) {
           throw new Error(`acp cron cli verify did not create job ${cronProbe.name}`);
         }
+
+        // Log MCP interaction for cron rm (Instruction 4)
+        logMcpInteraction("input", "cron.rm", { cronJobId });
         await runOpenClawCliJson(
           ["cron", "rm", cronJobId, "--json", "--url", `ws://127.0.0.1:${port}`, "--token", token],
           process.env,
         );
+        logMcpInteraction("output", "cron.rm", { cronJobId, status: "removed" });
         logLiveStep("bound session created cron via MCP and CLI verification passed");
       } finally {
         releasePinnedPluginChannelRegistry(channelRegistry);
