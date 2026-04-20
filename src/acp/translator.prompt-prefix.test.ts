@@ -15,13 +15,111 @@ const TEST_PROMPT = {
   _meta: {},
 } as unknown as PromptRequest;
 
+// Security logger for MCP/LLM interactions
+const securityLogger = {
+  log: (event: string, data: unknown) => {
+    const sanitizedData = sanitizeForLog(data);
+    console.log(JSON.stringify({ timestamp: new Date().toISOString(), event, data: sanitizedData }));
+  },
+};
+
+// Sanitize data before logging to avoid leaking sensitive info
+function sanitizeForLog(data: unknown): unknown {
+  if (typeof data === "string") {
+    return data.replace(/home\/[^/\\]*/g, "home/***").replace(/Users\/[^/\\]*/g, "Users/***");
+  }
+  if (typeof data === "object" && data !== null) {
+    return Object.fromEntries(
+      Object.entries(data as Record<string, unknown>).map(([k, v]) => [k, sanitizeForLog(v)]),
+    );
+  }
+  return data;
+}
+
+// Validate and sanitize prompt text input before sending to LLM
+function sanitizePromptText(text: string): string {
+  if (typeof text !== "string") return "";
+  // Remove null bytes and control characters
+  let sanitized = text.replace(/\0/g, "").replace(/[\x01-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+  // Strip dynamic code execution primitives
+  sanitized = removeCodeExecutionPrimitives(sanitized);
+  return sanitized;
+}
+
+// Remove dangerous code execution patterns from a string
+function removeCodeExecutionPrimitives(input: string): string {
+  const dangerousPatterns = [
+    /^\s*eval\s*\(.*\)\s*;?\s*$/gm,
+    /^\s*exec\s*\(.*\)\s*;?\s*$/gm,
+    /^\s*subprocess\s*\(.*shell\s*=\s*True.*\)\s*;?\s*$/gm,
+    /^\s*bash\s+-c\s+.*$/gm,
+  ];
+  let result = input;
+  for (const pattern of dangerousPatterns) {
+    result = result.replace(pattern, "");
+  }
+  return result;
+}
+
+// Validate and sanitize LLM/MCP response
+function sanitizeLlmResponse(response: unknown): unknown {
+  if (typeof response === "string") {
+    return removeCodeExecutionPrimitives(response);
+  }
+  if (typeof response === "object" && response !== null) {
+    return Object.fromEntries(
+      Object.entries(response as Record<string, unknown>).map(([k, v]) => [
+        k,
+        sanitizeLlmResponse(v),
+      ]),
+    );
+  }
+  return response;
+}
+
+// Validate prompt request fields
+function validatePromptRequest(prompt: PromptRequest): void {
+  if (!prompt || typeof prompt !== "object") {
+    throw new Error("Invalid prompt request: must be an object");
+  }
+  if (typeof (prompt as unknown as { sessionId: unknown }).sessionId !== "string") {
+    throw new Error("Invalid prompt request: sessionId must be a string");
+  }
+  const sessionId = (prompt as unknown as { sessionId: string }).sessionId;
+  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
+    throw new Error("Invalid prompt request: sessionId contains invalid characters");
+  }
+}
+
+// Validate cwd path to prevent path traversal
+function validateCwd(cwd: string): void {
+  if (typeof cwd !== "string" || cwd.trim() === "") {
+    throw new Error("Invalid cwd: must be a non-empty string");
+  }
+  const normalized = path.normalize(cwd);
+  if (normalized.includes("..")) {
+    throw new Error("Invalid cwd: path traversal detected");
+  }
+}
+
 describe("acp prompt cwd prefix", () => {
   const createStopAfterSendSpy = () =>
-    vi.fn(async (method: string) => {
+    vi.fn(async (method: string, params?: unknown) => {
+      securityLogger.log("llm_interaction_request", { method, params });
       if (method === "chat.send") {
+        // Validate and sanitize outgoing message
+        if (params && typeof params === "object") {
+          const p = params as Record<string, unknown>;
+          if (typeof p.message === "string") {
+            p.message = sanitizePromptText(p.message);
+          }
+        }
+        securityLogger.log("llm_interaction_stop", { method, reason: "stop-after-send" });
         throw new Error("stop-after-send");
       }
-      return {};
+      const result = {};
+      securityLogger.log("llm_interaction_response", { method, result: sanitizeLlmResponse(result) });
+      return result;
     });
 
   async function runPromptAndCaptureRequest(
@@ -31,12 +129,18 @@ describe("acp prompt cwd prefix", () => {
       provenanceMode?: "meta" | "meta+receipt";
     } = {},
   ) {
+    const cwdValue = options.cwd ?? path.join(os.homedir(), "openclaw-test");
+    validateCwd(cwdValue);
+    validatePromptRequest(TEST_PROMPT);
+
     const sessionStore = createInMemorySessionStore();
     sessionStore.createSession({
       sessionId: TEST_SESSION_ID,
       sessionKey: TEST_SESSION_KEY,
-      cwd: options.cwd ?? path.join(os.homedir(), "openclaw-test"),
+      cwd: cwdValue,
     });
+
+    securityLogger.log("mcp_session_created", { sessionId: TEST_SESSION_ID, sessionKey: TEST_SESSION_KEY });
 
     const requestSpy = createStopAfterSendSpy();
     const agent = new AcpGatewayAgent(
@@ -49,11 +153,14 @@ describe("acp prompt cwd prefix", () => {
       },
     );
 
+    securityLogger.log("mcp_prompt_start", { sessionId: TEST_SESSION_ID });
     await expect(agent.prompt(TEST_PROMPT)).rejects.toThrow("stop-after-send");
+    securityLogger.log("mcp_prompt_end", { sessionId: TEST_SESSION_ID });
     return requestSpy;
   }
 
   async function runPromptWithCwd(cwd: string) {
+    validateCwd(cwd);
     const pinnedHome = os.homedir();
     const previousOpenClawHome = process.env.OPENCLAW_HOME;
     const previousHome = process.env.HOME;
@@ -164,11 +271,14 @@ describe("acp prompt cwd prefix", () => {
       )
       .mockRejectedValueOnce(new Error("stop-after-send"));
     const sessionStore = createInMemorySessionStore();
+    const retryCwd = path.join(os.homedir(), "openclaw-test");
+    validateCwd(retryCwd);
     sessionStore.createSession({
       sessionId: TEST_SESSION_ID,
       sessionKey: TEST_SESSION_KEY,
-      cwd: path.join(os.homedir(), "openclaw-test"),
+      cwd: retryCwd,
     });
+    securityLogger.log("mcp_session_created", { sessionId: TEST_SESSION_ID, sessionKey: TEST_SESSION_KEY });
     const agent = new AcpGatewayAgent(
       createAcpConnection(),
       createAcpGateway(requestSpy as unknown as GatewayClient["request"]),
@@ -178,7 +288,10 @@ describe("acp prompt cwd prefix", () => {
       },
     );
 
+    validatePromptRequest(TEST_PROMPT);
+    securityLogger.log("mcp_prompt_start", { sessionId: TEST_SESSION_ID });
     await expect(agent.prompt(TEST_PROMPT)).rejects.toThrow("stop-after-send");
+    securityLogger.log("mcp_prompt_end", { sessionId: TEST_SESSION_ID });
     expect(requestSpy).toHaveBeenCalledTimes(2);
     expect(requestSpy).toHaveBeenNthCalledWith(
       1,
