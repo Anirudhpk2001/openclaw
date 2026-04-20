@@ -2,7 +2,7 @@ name: AI Policy Repo Scan
 
 on:
   push:
-    branches: [main] 
+    branches: [main]  
 
   # schedule:
   # - cron: '5 4 * * *'
