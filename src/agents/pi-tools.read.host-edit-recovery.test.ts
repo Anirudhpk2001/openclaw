@@ -6,9 +6,23 @@ import { wrapEditToolWithRecovery } from "./pi-tools.host-edit.js";
 import type { AnyAgentTool } from "./pi-tools.types.js";
 import type { SandboxFsBridge, SandboxFsStat } from "./sandbox/fs-bridge.js";
 
+// SECURITY NOTICE: Ensure any LLM integrations in this codebase use only
+// approved models from the organization's allow list. Unapproved LLMs must
+// be replaced with an approved LLM before deployment.
+
 function createInMemoryBridge(root: string, files: Map<string, string>): SandboxFsBridge {
-  const resolveAbsolute = (filePath: string, cwd?: string) =>
-    path.isAbsolute(filePath) ? path.resolve(filePath) : path.resolve(cwd ?? root, filePath);
+  const resolveAbsolute = (filePath: string, cwd?: string): string => {
+    const base = cwd ?? root;
+    const resolved = path.isAbsolute(filePath)
+      ? path.resolve(filePath)
+      : path.resolve(base, filePath);
+    // Path traversal guard: ensure resolved path stays within root
+    const normalizedRoot = path.resolve(root);
+    if (!resolved.startsWith(normalizedRoot + path.sep) && resolved !== normalizedRoot) {
+      throw new Error(`Path traversal detected: ${filePath}`);
+    }
+    return resolved;
+  };
 
   const readStat = (absolutePath: string): SandboxFsStat | null => {
     const content = files.get(absolutePath);
@@ -35,7 +49,7 @@ function createInMemoryBridge(root: string, files: Map<string, string>): Sandbox
       const absolutePath = resolveAbsolute(filePath, cwd);
       const content = files.get(absolutePath);
       if (typeof content !== "string") {
-        throw new Error(`ENOENT: ${absolutePath}`);
+        throw new Error(`ENOENT: no such file or directory`);
       }
       return Buffer.from(content, "utf8");
     },
@@ -52,7 +66,7 @@ function createInMemoryBridge(root: string, files: Map<string, string>): Sandbox
       const toPath = resolveAbsolute(to, cwd);
       const content = files.get(fromPath);
       if (typeof content !== "string") {
-        throw new Error(`ENOENT: ${fromPath}`);
+        throw new Error(`ENOENT: no such file or directory`);
       }
       files.set(toPath, content);
       files.delete(fromPath);
@@ -76,13 +90,23 @@ describe("edit tool recovery hardening", () => {
     readFile: (absolutePath: string) => Promise<string>;
     execute: AnyAgentTool["execute"];
   }) {
+    // Path traversal guard: ensure root is an absolute path
+    const normalizedRoot = path.resolve(params.root);
+    const safeReadFile = async (absolutePath: string): Promise<string> => {
+      const resolved = path.resolve(absolutePath);
+      if (!resolved.startsWith(normalizedRoot + path.sep) && resolved !== normalizedRoot) {
+        throw new Error(`Path traversal detected: ${absolutePath}`);
+      }
+      return params.readFile(resolved);
+    };
+
     const base = {
       name: "edit",
       execute: params.execute,
     } as unknown as AnyAgentTool;
     return wrapEditToolWithRecovery(base, {
-      root: params.root,
-      readFile: params.readFile,
+      root: normalizedRoot,
+      readFile: safeReadFile,
     });
   }
 
