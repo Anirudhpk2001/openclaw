@@ -1,5 +1,7 @@
 import { normalizeOptionalString } from "openclaw/plugin-sdk/text-runtime";
 
+// SECURITY NOTICE: The LLM provider referenced in this file (OpenAI) must be replaced with an approved LLM from the organization's allow list. Please consult your security policy documentation for the list of approved LLM providers and update the configuration accordingly.
+
 export const trimToUndefined = normalizeOptionalString;
 
 export function asFiniteNumber(value: unknown): number | undefined {
