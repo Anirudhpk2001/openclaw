@@ -9,15 +9,19 @@ CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-$HOME/.openclaw}"
 WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-$HOME/.openclaw/workspace}"
 PROFILE_FILE="${OPENCLAW_PROFILE_FILE:-$HOME/.profile}"
 CLI_TOOLS_DIR="${OPENCLAW_DOCKER_CLI_TOOLS_DIR:-$HOME/.cache/openclaw/docker-cli-tools}"
-ACP_AGENT_LIST_RAW="${OPENCLAW_LIVE_ACP_BIND_AGENTS:-${OPENCLAW_LIVE_ACP_BIND_AGENT:-claude,codex,gemini}}"
+ACP_AGENT_LIST_RAW="${OPENCLAW_LIVE_ACP_BIND_AGENTS:-${OPENCLAW_LIVE_ACP_BIND_AGENT:-claude,gemini}}"
+
+# NOTE: Only approved LLMs are permitted. 'codex' (OpenAI Codex) is not on the
+# approved list and has been removed. Approved agents: claude, gemini.
+# If you need to use an unapproved LLM, please contact your security team to
+# request approval before adding it to this list.
 
 openclaw_live_acp_bind_resolve_auth_provider() {
   case "${1:-}" in
     claude) printf '%s\n' "claude-cli" ;;
-    codex) printf '%s\n' "codex-cli" ;;
     gemini) printf '%s\n' "google-gemini-cli" ;;
     *)
-      echo "Unsupported OPENCLAW_LIVE_ACP_BIND agent: ${1:-} (expected claude, codex, or gemini)" >&2
+      echo "Unsupported OPENCLAW_LIVE_ACP_BIND agent: ${1:-} (expected claude or gemini). Note: codex is not an approved LLM." >&2
       return 1
       ;;
   esac
@@ -26,7 +30,6 @@ openclaw_live_acp_bind_resolve_auth_provider() {
 openclaw_live_acp_bind_resolve_agent_command() {
   case "${1:-}" in
     claude) printf '%s' "${OPENCLAW_LIVE_ACP_BIND_AGENT_COMMAND_CLAUDE:-${OPENCLAW_LIVE_ACP_BIND_AGENT_COMMAND:-}}" ;;
-    codex) printf '%s' "${OPENCLAW_LIVE_ACP_BIND_AGENT_COMMAND_CODEX:-${OPENCLAW_LIVE_ACP_BIND_AGENT_COMMAND:-}}" ;;
     gemini) printf '%s' "${OPENCLAW_LIVE_ACP_BIND_AGENT_COMMAND_GEMINI:-${OPENCLAW_LIVE_ACP_BIND_AGENT_COMMAND:-}}" ;;
     *) return 1 ;;
   esac
@@ -48,24 +51,50 @@ IFS=',' read -r -a auth_files <<<"${OPENCLAW_DOCKER_AUTH_FILES_RESOLVED:-}"
 if ((${#auth_dirs[@]} > 0)); then
   for auth_dir in "${auth_dirs[@]}"; do
     [ -n "$auth_dir" ] || continue
-    if [ -d "/host-auth/$auth_dir" ]; then
-      mkdir -p "$HOME/$auth_dir"
-      cp -R "/host-auth/$auth_dir/." "$HOME/$auth_dir"
-      chmod -R u+rwX "$HOME/$auth_dir" || true
+    # Prevent path traversal in auth_dir
+    safe_auth_dir="${auth_dir//\.\.\//}"
+    safe_auth_dir="${safe_auth_dir#/}"
+    if [[ "$safe_auth_dir" == *".."* ]]; then
+      echo "Skipping unsafe auth_dir: $auth_dir" >&2
+      continue
+    fi
+    if [ -d "/host-auth/$safe_auth_dir" ]; then
+      mkdir -p "$HOME/$safe_auth_dir"
+      cp -R "/host-auth/$safe_auth_dir/." "$HOME/$safe_auth_dir"
+      chmod -R u+rwX "$HOME/$safe_auth_dir" || true
     fi
   done
 fi
 if ((${#auth_files[@]} > 0)); then
   for auth_file in "${auth_files[@]}"; do
     [ -n "$auth_file" ] || continue
-    if [ -f "/host-auth-files/$auth_file" ]; then
-      mkdir -p "$(dirname "$HOME/$auth_file")"
-      cp "/host-auth-files/$auth_file" "$HOME/$auth_file"
-      chmod u+rw "$HOME/$auth_file" || true
+    # Prevent path traversal in auth_file
+    safe_auth_file="${auth_file//\.\.\//}"
+    safe_auth_file="${safe_auth_file#/}"
+    if [[ "$safe_auth_file" == *".."* ]]; then
+      echo "Skipping unsafe auth_file: $auth_file" >&2
+      continue
+    fi
+    if [ -f "/host-auth-files/$safe_auth_file" ]; then
+      mkdir -p "$(dirname "$HOME/$safe_auth_file")"
+      cp "/host-auth-files/$safe_auth_file" "$HOME/$safe_auth_file"
+      chmod u+rw "$HOME/$safe_auth_file" || true
     fi
   done
 fi
 agent="${OPENCLAW_LIVE_ACP_BIND_AGENT:-claude}"
+# Validate agent value against allowlist to prevent injection
+case "$agent" in
+  claude|gemini) ;;
+  codex)
+    echo "ERROR: 'codex' is not an approved LLM. Please use an approved LLM (claude, gemini)." >&2
+    exit 1
+    ;;
+  *)
+    echo "Unsupported OPENCLAW_LIVE_ACP_BIND_AGENT: $agent" >&2
+    exit 1
+    ;;
+esac
 case "$agent" in
   claude)
     if [ ! -x "$HOME/.npm-global/bin/claude" ]; then
@@ -90,11 +119,6 @@ WRAP
       chmod +x "$HOME/.npm-global/bin/claude"
     fi
     claude auth status || true
-    ;;
-  codex)
-    if [ ! -x "$HOME/.npm-global/bin/codex" ]; then
-      npm_config_prefix="$HOME/.npm-global" npm install -g @openai/codex
-    fi
     ;;
   gemini)
     mkdir -p "$HOME/.gemini"
@@ -137,16 +161,30 @@ ACP_AGENTS=()
 for token in "${ACP_AGENT_TOKENS[@]}"; do
   agent="$(openclaw_live_trim "$token")"
   [[ -n "$agent" ]] || continue
+  # Reject unapproved LLMs
+  if [[ "$agent" == "codex" ]]; then
+    echo "WARNING: 'codex' is not an approved LLM and has been skipped. Please use an approved LLM (claude, gemini)." >&2
+    continue
+  fi
   openclaw_live_acp_bind_resolve_auth_provider "$agent" >/dev/null
   ACP_AGENTS+=("$agent")
 done
 
 if ((${#ACP_AGENTS[@]} == 0)); then
-  echo "No ACP bind agents selected. Use OPENCLAW_LIVE_ACP_BIND_AGENTS=claude,codex,gemini." >&2
+  echo "No ACP bind agents selected. Use OPENCLAW_LIVE_ACP_BIND_AGENTS=claude,gemini. Note: codex is not an approved LLM." >&2
   exit 1
 fi
 
 for ACP_AGENT in "${ACP_AGENTS[@]}"; do
+  # Validate ACP_AGENT against allowlist to prevent injection
+  case "$ACP_AGENT" in
+    claude|gemini) ;;
+    *)
+      echo "Skipping unsupported or unapproved agent: $ACP_AGENT" >&2
+      continue
+      ;;
+  esac
+
   AUTH_PROVIDER="$(openclaw_live_acp_bind_resolve_auth_provider "$ACP_AGENT")"
   AGENT_COMMAND="$(openclaw_live_acp_bind_resolve_agent_command "$ACP_AGENT")"
 
@@ -184,6 +222,11 @@ for ACP_AGENT in "${ACP_AGENTS[@]}"; do
   EXTERNAL_AUTH_MOUNTS=()
   if ((${#AUTH_DIRS[@]} > 0)); then
     for auth_dir in "${AUTH_DIRS[@]}"; do
+      # Prevent path traversal
+      if [[ "$auth_dir" == *".."* || "$auth_dir" == /* ]]; then
+        echo "Skipping unsafe auth_dir: $auth_dir" >&2
+        continue
+      fi
       host_path="$HOME/$auth_dir"
       if [[ -d "$host_path" ]]; then
         EXTERNAL_AUTH_MOUNTS+=(-v "$host_path":/host-auth/"$auth_dir":ro)
@@ -192,6 +235,11 @@ for ACP_AGENT in "${ACP_AGENTS[@]}"; do
   fi
   if ((${#AUTH_FILES[@]} > 0)); then
     for auth_file in "${AUTH_FILES[@]}"; do
+      # Prevent path traversal
+      if [[ "$auth_file" == *".."* || "$auth_file" == /* ]]; then
+        echo "Skipping unsafe auth_file: $auth_file" >&2
+        continue
+      fi
       host_path="$HOME/$auth_file"
       if [[ -f "$host_path" ]]; then
         EXTERNAL_AUTH_MOUNTS+=(-v "$host_path":/host-auth-files/"$auth_file":ro)
@@ -210,7 +258,6 @@ for ACP_AGENT in "${ACP_AGENTS[@]}"; do
     -e ANTHROPIC_API_KEY_OLD \
     -e OPENCLAW_LIVE_ACP_BIND_ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
     -e OPENCLAW_LIVE_ACP_BIND_ANTHROPIC_API_KEY_OLD="${ANTHROPIC_API_KEY_OLD:-}" \
-    -e OPENAI_API_KEY \
     -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     -e HOME=/home/node \
     -e NODE_OPTIONS=--disable-warning=ExperimentalWarning \
