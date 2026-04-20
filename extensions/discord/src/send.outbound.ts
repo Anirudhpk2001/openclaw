@@ -44,6 +44,10 @@ import {
   sendDiscordVoiceMessage,
 } from "./voice-message.js";
 
+// NOTE: If any LLM integration is added to this file, only approved LLMs from the
+// organization allow list may be used. Replace any unapproved LLM provider with an
+// approved one before merging.
+
 type DiscordSendOpts = {
   cfg?: OpenClawConfig;
   token?: string;
@@ -344,12 +348,24 @@ function resolveWebhookExecutionUrl(params: {
   threadId?: string | number;
   wait?: boolean;
 }) {
+  // Validate webhookId and webhookToken to prevent injection via URL construction.
+  if (!/^\d+$/.test(params.webhookId)) {
+    throw new Error("Invalid webhook ID format");
+  }
+  if (!/^[\w-]+$/.test(params.webhookToken)) {
+    throw new Error("Invalid webhook token format");
+  }
   const baseUrl = new URL(
     `https://discord.com/api/v10/webhooks/${encodeURIComponent(params.webhookId)}/${encodeURIComponent(params.webhookToken)}`,
   );
   baseUrl.searchParams.set("wait", params.wait === false ? "false" : "true");
   if (params.threadId !== undefined && params.threadId !== null && params.threadId !== "") {
-    baseUrl.searchParams.set("thread_id", String(params.threadId));
+    // Validate threadId to only allow numeric values to prevent injection.
+    const threadIdStr = String(params.threadId);
+    if (!/^\d+$/.test(threadIdStr)) {
+      throw new Error("Invalid thread ID format");
+    }
+    baseUrl.searchParams.set("thread_id", threadIdStr);
   }
   return baseUrl.toString();
 }
@@ -365,6 +381,10 @@ export async function sendWebhookMessageDiscord(
   }
 
   const replyTo = normalizeOptionalString(opts.replyTo) ?? "";
+  // Validate replyTo to only allow snowflake IDs (numeric strings).
+  if (replyTo && !/^\d+$/.test(replyTo)) {
+    throw new Error("Invalid replyTo message ID format");
+  }
   const messageReference = replyTo ? { message_id: replyTo, fail_if_not_exists: false } : undefined;
   const { account, proxyFetch } = resolveDiscordClientAccountContext({
     cfg: opts.cfg,
@@ -395,9 +415,9 @@ export async function sendWebhookMessageDiscord(
     },
   );
   if (!response.ok) {
-    const raw = await response.text().catch(() => "");
+    // Avoid leaking sensitive response details; log a generic error message.
     throw new Error(
-      `Discord webhook send failed (${response.status}${raw ? `: ${raw.slice(0, 200)}` : ""})`,
+      `Discord webhook send failed (${response.status})`,
     );
   }
 
@@ -512,11 +532,21 @@ async function materializeVoiceMessageInput(mediaUrl: string): Promise<{ filePat
   const media = await loadWebMediaRaw(mediaUrl, maxBytesForKind("audio"));
   const extFromName = media.fileName ? path.extname(media.fileName) : "";
   const extFromMime = media.contentType ? extensionForMime(media.contentType) : "";
-  const ext = extFromName || extFromMime || ".bin";
+  // Sanitize extension: only allow safe alphanumeric extensions to prevent path traversal.
+  const rawExt = extFromName || extFromMime || ".bin";
+  const ext = /^\.[a-zA-Z0-9]{1,10}$/.test(rawExt) ? rawExt : ".bin";
   const tempDir = resolvePreferredOpenClawTmpDir();
-  const filePath = path.join(tempDir, `voice-src-${crypto.randomUUID()}${ext}`);
-  await fs.writeFile(filePath, media.buffer, { mode: 0o600 });
-  return { filePath };
+  // Use only the basename of tempDir and a UUID filename to prevent path traversal.
+  const safeFileName = `voice-src-${crypto.randomUUID()}${ext}`;
+  const filePath = path.join(tempDir, safeFileName);
+  // Ensure the resolved path is still within the intended temp directory.
+  const resolvedFilePath = path.resolve(filePath);
+  const resolvedTempDir = path.resolve(tempDir);
+  if (!resolvedFilePath.startsWith(resolvedTempDir + path.sep) && resolvedFilePath !== resolvedTempDir) {
+    throw new Error("Resolved temp file path escapes the temp directory");
+  }
+  await fs.writeFile(resolvedFilePath, media.buffer, { mode: 0o600 });
+  return { filePath: resolvedFilePath };
 }
 
 /**
