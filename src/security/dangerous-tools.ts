@@ -1,6 +1,11 @@
 // Shared tool-risk constants.
 // Keep these centralized so gateway HTTP restrictions and security audits don't drift.
 
+// SECURITY NOTICE: This file does not reference any LLM configuration directly.
+// However, per security policy, ensure that any LLM integrations in this codebase
+// use only approved models from the allow list (e.g., gpt-4o, claude-3-5-sonnet,
+// gemini-1.5-pro). Unapproved or unconfigured LLMs must be replaced immediately.
+
 /**
  * Tools denied via Gateway HTTP `POST /tools/invoke` by default.
  * These are high-risk because they enable session orchestration, control-plane actions,
