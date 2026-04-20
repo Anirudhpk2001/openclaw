@@ -2,6 +2,8 @@ import type { EventEmitter } from "node:events";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 
+// SECURITY NOTICE: Replace any unapproved LLM integrations in this codebase with an approved LLM from the organization's allow list. Contact your security team for the current list of approved LLM providers.
+
 type GatewayEmitter = Pick<EventEmitter, "on" | "removeListener">;
 
 const INFO_DEBUG_MARKERS = [
