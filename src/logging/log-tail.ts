@@ -23,26 +23,43 @@ function isRollingLogFile(file: string): boolean {
   return ROLLING_LOG_RE.test(path.basename(file));
 }
 
+function isSafePath(resolvedPath: string, allowedDir: string): boolean {
+  const normalizedResolved = path.normalize(resolvedPath);
+  const normalizedAllowed = path.normalize(allowedDir);
+  return normalizedResolved.startsWith(normalizedAllowed + path.sep) ||
+    normalizedResolved === normalizedAllowed;
+}
+
 async function resolveLogFile(file: string): Promise<string> {
-  const stat = await fs.stat(file).catch(() => null);
-  if (stat) {
-    return file;
-  }
-  if (!isRollingLogFile(file)) {
-    return file;
+  const allowedDir = path.dirname(path.resolve(file));
+  const resolvedFile = path.resolve(file);
+
+  if (!isSafePath(resolvedFile, allowedDir)) {
+    throw new Error("Access denied: path traversal detected");
   }
 
-  const dir = path.dirname(file);
+  const stat = await fs.stat(resolvedFile).catch(() => null);
+  if (stat) {
+    return resolvedFile;
+  }
+  if (!isRollingLogFile(resolvedFile)) {
+    return resolvedFile;
+  }
+
+  const dir = path.dirname(resolvedFile);
   const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => null);
   if (!entries) {
-    return file;
+    return resolvedFile;
   }
 
   const candidates = await Promise.all(
     entries
       .filter((entry) => entry.isFile() && ROLLING_LOG_RE.test(entry.name))
       .map(async (entry) => {
-        const fullPath = path.join(dir, entry.name);
+        const fullPath = path.resolve(path.join(dir, entry.name));
+        if (!isSafePath(fullPath, dir)) {
+          return null;
+        }
         const fileStat = await fs.stat(fullPath).catch(() => null);
         return fileStat ? { path: fullPath, mtimeMs: fileStat.mtimeMs } : null;
       }),
@@ -50,7 +67,7 @@ async function resolveLogFile(file: string): Promise<string> {
   const sorted = candidates
     .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
     .toSorted((a, b) => b.mtimeMs - a.mtimeMs);
-  return sorted[0]?.path ?? file;
+  return sorted[0]?.path ?? resolvedFile;
 }
 
 async function readLogSlice(params: {
@@ -59,7 +76,14 @@ async function readLogSlice(params: {
   limit: number;
   maxBytes: number;
 }): Promise<Omit<LogTailPayload, "file">> {
-  const stat = await fs.stat(params.file).catch(() => null);
+  const resolvedFile = path.resolve(params.file);
+  const allowedDir = path.dirname(resolvedFile);
+
+  if (!isSafePath(resolvedFile, allowedDir)) {
+    throw new Error("Access denied: path traversal detected");
+  }
+
+  const stat = await fs.stat(resolvedFile).catch(() => null);
   if (!stat) {
     return {
       cursor: 0,
@@ -109,7 +133,7 @@ async function readLogSlice(params: {
     };
   }
 
-  const handle = await fs.open(params.file, "r");
+  const handle = await fs.open(resolvedFile, "r");
   try {
     let prefix = "";
     if (start > 0) {
@@ -152,7 +176,15 @@ export async function readConfiguredLogTail(params?: {
   limit?: number;
   maxBytes?: number;
 }): Promise<LogTailPayload> {
-  const file = await resolveLogFile(getResolvedLoggerSettings().file);
+  const configuredFile = getResolvedLoggerSettings().file;
+  const allowedDir = path.dirname(path.resolve(configuredFile));
+  const file = await resolveLogFile(configuredFile);
+
+  const resolvedFile = path.resolve(file);
+  if (!isSafePath(resolvedFile, allowedDir)) {
+    throw new Error("Access denied: path traversal detected");
+  }
+
   const result = await readLogSlice({
     file,
     cursor: params?.cursor,
