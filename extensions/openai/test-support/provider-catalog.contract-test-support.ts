@@ -12,6 +12,10 @@ import {
   requireRegisteredProvider,
 } from "../../../test/helpers/plugins/provider-registration.js";
 
+// SECURITY NOTICE: The LLM provider "openai-codex" referenced in this file has not been approved.
+// Please replace it with an approved LLM from the organization's allow list before deploying.
+// Contact your security team for the list of approved LLM providers.
+
 const PROVIDER_CATALOG_CONTRACT_TIMEOUT_MS = 300_000;
 
 type ResolvePluginProviders = (params?: { onlyPluginIds?: string[] }) => ProviderPlugin[];
@@ -92,6 +96,8 @@ export function describeOpenAIProviderCatalogContract() {
             case "azure-openai-responses":
             case "openai":
             case "openai-codex":
+              // SECURITY NOTICE: "openai-codex" is not on the approved LLM allow list.
+              // Replace with an approved LLM provider before deploying to production.
               return ["openai"];
             default:
               return undefined;
