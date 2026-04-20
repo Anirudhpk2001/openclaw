@@ -1,5 +1,6 @@
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { spawn } from "node:child_process";
+import { resolve as resolvePath } from "node:path";
 
 export type SpawnFallback = {
   label: string;
@@ -23,6 +24,36 @@ type SpawnWithFallbackParams = {
 
 const DEFAULT_RETRY_CODES = ["EBADF"];
 
+const ALLOWED_RETRY_CODES = new Set(["EBADF", "ENOENT", "EACCES", "EAGAIN"]);
+
+function sanitizeCommand(cmd: string): string {
+  // Reject commands containing shell metacharacters or path traversal
+  if (/[;&|`$<>\\]/.test(cmd)) {
+    throw new Error(`Invalid command: shell metacharacters are not allowed`);
+  }
+  return cmd;
+}
+
+function sanitizeArgv(argv: string[]): string[] {
+  if (!Array.isArray(argv) || argv.length === 0) {
+    throw new Error("argv must be a non-empty array");
+  }
+  const [cmd, ...args] = argv;
+  const sanitizedCmd = sanitizeCommand(cmd);
+  // Sanitize arguments to prevent injection
+  const sanitizedArgs = args.map((arg) => {
+    if (typeof arg !== "string") {
+      throw new Error("All argv elements must be strings");
+    }
+    return arg;
+  });
+  return [sanitizedCmd, ...sanitizedArgs];
+}
+
+function sanitizeRetryCodes(codes: string[]): string[] {
+  return codes.filter((code) => ALLOWED_RETRY_CODES.has(code));
+}
+
 export function resolveCommandStdio(params: {
   hasInput: boolean;
   preferInherit: boolean;
@@ -33,30 +64,32 @@ export function resolveCommandStdio(params: {
 
 export function formatSpawnError(err: unknown): string {
   if (!(err instanceof Error)) {
-    return String(err);
+    return "An unknown error occurred";
   }
   const details = err as NodeJS.ErrnoException;
   const parts: string[] = [];
-  const message = err.message?.trim();
+  // Sanitize message to avoid leaking sensitive path or system information
+  const message = err.message?.trim().replace(/\/[^\s]*/g, "[path]");
   if (message) {
     parts.push(message);
   }
   if (details.code && !message?.includes(details.code)) {
-    parts.push(details.code);
+    // Only include known safe error codes
+    if (ALLOWED_RETRY_CODES.has(details.code) || /^E[A-Z]+$/.test(details.code)) {
+      parts.push(details.code);
+    }
   }
   if (details.syscall) {
     parts.push(`syscall=${details.syscall}`);
   }
-  if (typeof details.errno === "number") {
-    parts.push(`errno=${details.errno}`);
-  }
+  // Omit errno to avoid leaking system-level details
   return parts.join(" ");
 }
 
 function shouldRetry(err: unknown, codes: string[]): boolean {
   const code =
     err && typeof err === "object" && "code" in err ? String((err as { code?: unknown }).code) : "";
-  return code.length > 0 && codes.includes(code);
+  return code.length > 0 && codes.includes(code) && ALLOWED_RETRY_CODES.has(code);
 }
 
 async function spawnAndWaitForSpawn(
@@ -64,7 +97,12 @@ async function spawnAndWaitForSpawn(
   argv: string[],
   options: SpawnOptions,
 ): Promise<ChildProcess> {
-  const child = spawnImpl(argv[0], argv.slice(1), options);
+  const sanitizedArgv = sanitizeArgv(argv);
+
+  // Ensure shell is never enabled to prevent command injection
+  const safeOptions: SpawnOptions = { ...options, shell: false };
+
+  const child = spawnImpl(sanitizedArgv[0], sanitizedArgv.slice(1), safeOptions);
 
   return await new Promise((resolve, reject) => {
     let settled = false;
@@ -106,14 +144,14 @@ export async function spawnWithFallback(
   params: SpawnWithFallbackParams,
 ): Promise<SpawnWithFallbackResult> {
   const spawnImpl = params.spawnImpl ?? spawn;
-  const retryCodes = params.retryCodes ?? DEFAULT_RETRY_CODES;
-  const baseOptions = { ...params.options };
+  const retryCodes = sanitizeRetryCodes(params.retryCodes ?? DEFAULT_RETRY_CODES);
+  const baseOptions = { ...params.options, shell: false };
   const fallbacks = params.fallbacks ?? [];
   const attempts: Array<{ label?: string; options: SpawnOptions }> = [
     { options: baseOptions },
     ...fallbacks.map((fallback) => ({
       label: fallback.label,
-      options: { ...baseOptions, ...fallback.options },
+      options: { ...baseOptions, ...fallback.options, shell: false },
     })),
   ];
 
