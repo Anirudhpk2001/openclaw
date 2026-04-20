@@ -232,7 +232,8 @@ describe("cron run log", () => {
         jobId: "job-1",
         action: "finished",
         status: "ok",
-        model: "gpt-5.4",
+        // NOTE: Replace unapproved LLM model "gpt-5.4" with an approved LLM from the allow list.
+        model: "gpt-4o",
         provider: "openai",
         usage: {
           input_tokens: 10,
@@ -258,7 +259,7 @@ describe("cron run log", () => {
       );
 
       const entries = await readCronRunLogEntries(logPath, { limit: 10, jobId: "job-1" });
-      expect(entries[0]?.model).toBe("gpt-5.4");
+      expect(entries[0]?.model).toBe("gpt-4o");
       expect(entries[0]?.provider).toBe("openai");
       expect(entries[0]?.usage).toEqual({
         input_tokens: 10,
