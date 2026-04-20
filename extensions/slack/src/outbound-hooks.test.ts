@@ -161,7 +161,7 @@ describe("slack outbound hook wiring", () => {
             defaultAccount: "work",
             accounts: {
               work: {
-                botToken: "xoxb-work",
+                botToken: process.env.SLACK_BOT_TOKEN_WORK,
               },
             },
           },
