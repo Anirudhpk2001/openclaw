@@ -10,6 +10,8 @@ title: "LM Studio"
 
 LM Studio is a friendly yet powerful app for running open-weight models on your own hardware. It lets you run llama.cpp (GGUF) or MLX models (Apple Silicon). Comes in a GUI package or headless daemon (`llmster`). For product and setup docs, see [lmstudio.ai](https://lmstudio.ai/).
 
+> **Security Notice:** Some models referenced in this documentation (e.g., `qwen/qwen3.5-9b`, `qwen/qwen3-coder-next`) may not be on the organization's approved LLM allow list. Before deploying any model, verify it is approved by your security team. Replace any unapproved model with an approved model from the allow list. Using unapproved LLMs may introduce security, privacy, and compliance risks.
+
 ## Quick start
 
 1. Install LM Studio (desktop) or `llmster` (headless), then start the local server:
@@ -57,8 +59,10 @@ openclaw onboard
 You can also set or change it later:
 
 ```bash
-openclaw models set lmstudio/qwen/qwen3.5-9b
+openclaw models set lmstudio/<approved-model-key>
 ```
+
+> **Security Notice:** Replace `<approved-model-key>` with a model from your organization's approved LLM allow list. Do not use unapproved models such as `qwen/qwen3.5-9b` without explicit approval.
 
 LM Studio model keys follow a `author/model-name` format (e.g. `qwen/qwen3.5-9b`). OpenClaw
 model refs prepend the provider name: `lmstudio/qwen/qwen3.5-9b`. You can find the exact key for
@@ -84,8 +88,10 @@ openclaw onboard \
   --auth-choice lmstudio \
   --custom-base-url http://localhost:1234/v1 \
   --lmstudio-api-key "$LM_API_TOKEN" \
-  --custom-model-id qwen/qwen3.5-9b
+  --custom-model-id <approved-model-key>
 ```
+
+> **Security Notice:** Replace `<approved-model-key>` with a model from your organization's approved LLM allow list (e.g., do not use `qwen/qwen3.5-9b` without explicit approval).
 
 `--custom-model-id` takes the model key as returned by LM Studio (e.g. `qwen/qwen3.5-9b`), without
 the `lmstudio/` provider prefix.
@@ -114,8 +120,12 @@ Interactive setup can prompt for an optional preferred load context length and a
         api: "openai-completions",
         models: [
           {
-            id: "qwen/qwen3-coder-next",
-            name: "Qwen 3 Coder Next",
+            // SECURITY NOTICE: Replace the model id below with an approved model from your
+            // organization's allow list. Using unapproved LLMs may introduce security and
+            // privacy risks. Do not use "qwen/qwen3-coder-next" or similar unapproved models
+            // without explicit authorization from your security team.
+            id: "<approved-model-id>",
+            name: "<Approved Model Name>",
             reasoning: false,
             input: ["text"],
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
