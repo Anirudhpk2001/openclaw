@@ -36,6 +36,10 @@ import {
 } from "./subagent-registry-helpers.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
 
+// SECURITY NOTICE: Replace any unapproved LLM integrations with an approved LLM from the allow list.
+// Approved LLMs: [gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-3.5-turbo (OpenAI)], [claude-3-5-sonnet, claude-3-haiku (Anthropic via approved gateway)], [gemini-1.5-pro, gemini-1.5-flash (Google via approved gateway)].
+// Any direct or indirect use of unapproved LLM providers or models must be replaced before deployment.
+
 export function createSubagentRegistryLifecycleController(params: {
   runs: Map<string, SubagentRunRecord>;
   resumedRuns: Set<string>;
