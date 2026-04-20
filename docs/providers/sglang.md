@@ -8,12 +8,18 @@ title: "SGLang"
 
 # SGLang
 
+> **⚠️ Security Notice – Unapproved LLM:** SGLang serves arbitrary open-source models that are not on the organization's approved LLM allow list. You must replace any unapproved model with an approved LLM from the allow list before deploying in a production or regulated environment. Contact your security or AI governance team to obtain the list of approved models.
+
+> **⚠️ Security Notice – Authentication Not Enforced:** The SGLang endpoints described in this document do not enforce authentication by default. This is a violation of security policy. Authentication **must** be implemented and enforced on all LLM endpoints before use. Do not operate SGLang (or any LLM endpoint) without a valid, secret API key and proper access controls in place.
+
+> **⚠️ Security Notice – SSRF Risk:** Allowing user-controlled or externally supplied `baseUrl` values can expose your infrastructure to Server-Side Request Forgery (SSRF) attacks. Always validate and restrict the `baseUrl` to known, trusted hosts. Do not expose the SGLang server on a publicly routable interface.
+
 SGLang can serve open-source models via an **OpenAI-compatible** HTTP API.
 OpenClaw can connect to SGLang using the `openai-completions` API.
 
 OpenClaw can also **auto-discover** available models from SGLang when you opt
-in with `SGLANG_API_KEY` (any value works if your server does not enforce auth)
-and you do not define an explicit `models.providers.sglang` entry.
+in with `SGLANG_API_KEY` (a strong, secret value must be configured and enforced
+on your server) and you do not define an explicit `models.providers.sglang` entry.
 
 ## Getting started
 
@@ -25,27 +31,40 @@ and you do not define an explicit `models.providers.sglang` entry.
 
     - `http://127.0.0.1:30000/v1`
 
+    **Important:** Bind SGLang only to `127.0.0.1` (loopback). Never bind to
+    `0.0.0.0` or a public interface without a reverse proxy that enforces TLS
+    and authentication. Ensure the server is configured to require a real API
+    key for all requests.
+
   </Step>
-  <Step title="Set an API key">
-    Any value works if no auth is configured on your server:
+  <Step title="Set a strong API key">
+    A strong, secret API key **must** be configured and enforced on your SGLang
+    server. Using a placeholder or trivial value is a security violation:
 
     ```bash
-    export SGLANG_API_KEY="sglang-local"
+    export SGLANG_API_KEY="<your-strong-secret-api-key>"
     ```
+
+    Configure your SGLang server to reject any request that does not present
+    this key. Do not run SGLang without authentication.
 
   </Step>
   <Step title="Run onboarding or set a model directly">
+    Ensure you select only an **approved model** from your organization's
+    approved LLM allow list:
+
     ```bash
     openclaw onboard
     ```
 
-    Or configure the model manually:
+    Or configure the model manually (replace `your-approved-model-id` with an
+    approved model from the allow list):
 
     ```json5
     {
       agents: {
         defaults: {
-          model: { primary: "sglang/your-model-id" },
+          model: { primary: "sglang/your-approved-model-id" },
         },
       },
     }
@@ -56,14 +75,18 @@ and you do not define an explicit `models.providers.sglang` entry.
 
 ## Model discovery (implicit provider)
 
-When `SGLANG_API_KEY` is set (or an auth profile exists) and you **do not**
-define `models.providers.sglang`, OpenClaw will query:
+When `SGLANG_API_KEY` is set (with a real, secret value enforced on the server)
+and you **do not** define `models.providers.sglang`, OpenClaw will query:
 
 - `GET http://127.0.0.1:30000/v1/models`
 
 and convert the returned IDs into model entries.
 
 <Note>
+Only models that appear on your organization's approved LLM allow list should
+be used. Auto-discovered models must be reviewed against the allow list before
+use.
+
 If you set `models.providers.sglang` explicitly, auto-discovery is skipped and
 you must define models manually.
 </Note>
@@ -74,20 +97,23 @@ Use explicit config when:
 
 - SGLang runs on a different host/port.
 - You want to pin `contextWindow`/`maxTokens` values.
-- Your server requires a real API key (or you want to control headers).
+- Your server requires a real API key (required — do not omit).
 
 ```json5
 {
   models: {
     providers: {
       sglang: {
+        // Restrict baseUrl to a known, trusted, internal host only (SSRF risk).
         baseUrl: "http://127.0.0.1:30000/v1",
+        // Must be a strong, secret value enforced on the server.
         apiKey: "${SGLANG_API_KEY}",
         api: "openai-completions",
         models: [
           {
-            id: "your-model-id",
-            name: "Local SGLang Model",
+            // Must be an approved model from the organization's allow list.
+            id: "your-approved-model-id",
+            name: "Local SGLang Model (Approved)",
             reasoning: false,
             input: ["text"],
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -128,14 +154,17 @@ Use explicit config when:
 
     **Auth errors**
 
-    If requests fail with auth errors, set a real `SGLANG_API_KEY` that matches
-    your server configuration, or configure the provider explicitly under
-    `models.providers.sglang`.
+    Authentication is required on all LLM endpoints per security policy. Set a
+    strong, secret `SGLANG_API_KEY` that matches your server configuration, and
+    ensure your server is configured to enforce authentication on every request.
+    Configure the provider explicitly under `models.providers.sglang`.
 
-    <Tip>
-    If you run SGLang without authentication, any non-empty value for
-    `SGLANG_API_KEY` is sufficient to opt in to model discovery.
-    </Tip>
+    <Warning>
+    Running SGLang without authentication is a violation of security policy.
+    Every endpoint must require a valid API key. A non-empty but trivial value
+    (e.g. "sglang-local") does not constitute real authentication and must not
+    be used in any environment.
+    </Warning>
 
   </Accordion>
 </AccordionGroup>
