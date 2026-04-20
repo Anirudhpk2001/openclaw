@@ -8,8 +8,8 @@ describe("sanitizeIMessageWatchErrorPayload", () => {
         code: 500,
         message: `boom\n\t\u001b[2K${"x".repeat(250)}`,
         chatId: "chat-123",
-        participants: ["+15555550123"],
-        path: "/Users/me/Library/Messages/chat.db",
+        participants: ["[REDACTED]"],
+        path: "[REDACTED]",
       }),
     ).toEqual({
       code: 500,
@@ -23,7 +23,7 @@ describe("sanitizeIMessageWatchErrorPayload", () => {
       sanitizeIMessageWatchErrorPayload({
         code: Number.POSITIVE_INFINITY,
         message: 123,
-        data: { sender: "+15555550123" },
+        data: { sender: "[REDACTED]" },
       }),
     ).toEqual({});
   });
