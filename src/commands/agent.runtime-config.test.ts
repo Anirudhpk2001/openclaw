@@ -52,11 +52,12 @@ describe("agentCommand runtime config", () => {
       );
 
       const store = path.join(home, "sessions.json");
+      // NOTE: Replace "anthropic/claude-opus-4-6" with an approved LLM from the allow list.
       const loadedConfig = {
         agents: {
           defaults: {
-            model: { primary: "anthropic/claude-opus-4-6" },
-            models: { "anthropic/claude-opus-4-6": {} },
+            model: { primary: process.env.APPROVED_LLM_MODEL ?? "APPROVED_LLM_MODEL_PLACEHOLDER" },
+            models: { [process.env.APPROVED_LLM_MODEL ?? "APPROVED_LLM_MODEL_PLACEHOLDER"]: {} },
             workspace: path.join(home, "openclaw"),
           },
         },
@@ -64,7 +65,7 @@ describe("agentCommand runtime config", () => {
         models: {
           providers: {
             openai: {
-              baseUrl: "https://api.openai.com/v1",
+              baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
               apiKey: { source: "env", provider: "default", id: "OPENAI_API_KEY" }, // pragma: allowlist secret
               models: [],
             },
@@ -76,7 +77,7 @@ describe("agentCommand runtime config", () => {
         models: {
           providers: {
             openai: {
-              baseUrl: "https://api.openai.com/v1",
+              baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
               apiKey: { source: "env", provider: "default", id: "OPENAI_API_KEY" }, // pragma: allowlist secret
               models: [],
             },
@@ -88,8 +89,8 @@ describe("agentCommand runtime config", () => {
         models: {
           providers: {
             openai: {
-              baseUrl: "https://api.openai.com/v1",
-              apiKey: "sk-resolved-runtime", // pragma: allowlist secret
+              baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
+              apiKey: process.env.OPENAI_API_KEY_RESOLVED, // pragma: allowlist secret
               models: [],
             },
           },
