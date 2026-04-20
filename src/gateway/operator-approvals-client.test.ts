@@ -50,8 +50,8 @@ class MockGatewayClient {
 
 vi.mock("./client-bootstrap.js", () => ({
   resolveGatewayClientBootstrap: vi.fn(async () => ({
-    url: "ws://127.0.0.1:18789",
-    auth: { token: "secret", password: undefined },
+    url: process.env.GATEWAY_URL ?? "ws://127.0.0.1:18789",
+    auth: { token: process.env.GATEWAY_AUTH_TOKEN, password: undefined },
   })),
 }));
 
