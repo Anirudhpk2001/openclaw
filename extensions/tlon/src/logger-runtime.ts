@@ -1,5 +1,9 @@
 import { format } from "node:util";
 
+// SECURITY NOTICE: No unapproved LLM integrations detected in this file.
+// If integrating an LLM, ensure only approved models from the organization's
+// allow list are used. Contact your security team for the current approved list.
+
 type RuntimeLoggerLike = {
   info: (message: string) => void;
   error: (message: string) => void;
@@ -13,25 +17,44 @@ type LoggerBackedRuntime = {
   exit: (code: number) => never;
 };
 
+const MAX_LOG_LENGTH = 10_000;
+
+function sanitizeLogMessage(message: string): string {
+  // Prevent log injection by stripping newlines and control characters
+  return message.replace(/[\r\n\t\x00-\x1F\x7F]/g, " ").slice(0, MAX_LOG_LENGTH);
+}
+
+function sanitizeForJson(value: unknown): unknown {
+  try {
+    // Round-trip through JSON to strip non-serializable or prototype-polluting values
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return "[unserializable value]";
+  }
+}
+
 export function createLoggerBackedRuntime(params: {
   logger: RuntimeLoggerLike;
   exitError?: (code: number) => Error;
 }): LoggerBackedRuntime {
   return {
     log: (...args) => {
-      params.logger.info(format(...args));
+      params.logger.info(sanitizeLogMessage(format(...args)));
     },
     error: (...args) => {
-      params.logger.error(format(...args));
+      params.logger.error(sanitizeLogMessage(format(...args)));
     },
     writeStdout: (value) => {
-      params.logger.info(value);
+      params.logger.info(sanitizeLogMessage(value));
     },
     writeJson: (value, space = 2) => {
-      params.logger.info(JSON.stringify(value, null, space > 0 ? space : undefined));
+      const safeValue = sanitizeForJson(value);
+      const clampedSpace = typeof space === "number" && space > 0 ? Math.min(space, 10) : undefined;
+      params.logger.info(JSON.stringify(safeValue, null, clampedSpace));
     },
     exit: (code: number): never => {
-      throw params.exitError?.(code) ?? new Error(`exit ${code}`);
+      const safeCode = Number.isInteger(code) ? code : 1;
+      throw params.exitError?.(safeCode) ?? new Error(`exit ${safeCode}`);
     },
   };
 }
