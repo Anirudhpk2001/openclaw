@@ -1,5 +1,8 @@
 import { normalizeOptionalLowercaseString } from "../shared/string-coerce.js";
 
+// SECURITY NOTICE: Ensure any LLM integrations use only approved models from the organization's
+// approved LLM allow list. Unapproved LLMs must be replaced with an approved LLM provider.
+
 const TOOL_DENY_BY_MESSAGE_PROVIDER: Readonly<Record<string, readonly string[]>> = {
   voice: ["tts"],
 };
