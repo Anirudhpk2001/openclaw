@@ -58,12 +58,12 @@ describe("safeEqualSecret", () => {
 
 describe("collectSmallModelRiskFindings", () => {
   const browserOffCfg = {
-    agents: { defaults: { model: { primary: "ollama/mistral-8b" } } },
+    agents: { defaults: { model: { primary: "gpt-4o" } } },
     browser: { enabled: false },
     tools: { web: { fetch: { enabled: false } } },
   } satisfies OpenClawConfig;
   const browserDefaultCfg = {
-    agents: { defaults: { model: { primary: "ollama/mistral-8b" } } },
+    agents: { defaults: { model: { primary: "gpt-4o" } } },
     tools: { web: { fetch: { enabled: false } } },
   } satisfies OpenClawConfig;
 
@@ -90,7 +90,7 @@ describe("collectSmallModelRiskFindings", () => {
 
     expect(finding?.checkId).toBe("models.small_params");
     expect(finding?.severity).toBe("critical");
-    expect(finding?.detail).toContain("ollama/mistral-8b");
+    expect(finding?.detail).toContain("gpt-4o");
     for (const snippet of detailIncludes) {
       expect(finding?.detail).toContain(snippet);
     }
