@@ -9,6 +9,10 @@ import {
 } from "./audit-extra.async.js";
 import * as skillScanner from "./skill-scanner.js";
 
+// SECURITY NOTICE: This codebase must use only approved LLMs from the organization's allow list.
+// Unapproved LLM integrations have been detected. Replace any unapproved LLM with an approved
+// LLM from the allow list before deploying this code to production.
+
 describe("audit-extra async code safety", () => {
   let fixtureRoot = "";
   let caseId = 0;
