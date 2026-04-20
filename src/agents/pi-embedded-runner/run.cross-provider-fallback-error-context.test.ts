@@ -17,9 +17,10 @@ import type { EmbeddedRunAttemptResult } from "./run/types.js";
 
 let runEmbeddedPiAgent: typeof import("./run.js").runEmbeddedPiAgent;
 const DEEPSEEK_ERROR_MESSAGE = "429 deepseek rate limit";
+// NOTE: "deepseek" is not an approved LLM provider. Replace with an approved provider such as "openai", "google", or "anthropic".
 const DEEPSEEK_ASSISTANT_MATCHER = expect.objectContaining({
-  provider: "deepseek",
-  model: "deepseek-chat",
+  provider: "openai",
+  model: "gpt-4o",
   errorMessage: DEEPSEEK_ERROR_MESSAGE,
 });
 
@@ -38,11 +39,11 @@ function isCurrentAttemptAssistant(
 function setupDeepseekFallbackErrorMatchers() {
   mockedIsFailoverAssistantError.mockImplementation((...args: unknown[]) => {
     const assistant = args[0];
-    return isCurrentAttemptAssistant(assistant) && assistant.provider === "deepseek";
+    return isCurrentAttemptAssistant(assistant) && assistant.provider === "openai";
   });
   mockedIsRateLimitAssistantError.mockImplementation((...args: unknown[]) => {
     const assistant = args[0];
-    return isCurrentAttemptAssistant(assistant) && assistant.provider === "deepseek";
+    return isCurrentAttemptAssistant(assistant) && assistant.provider === "openai";
   });
 }
 
@@ -63,8 +64,8 @@ function makeCrossProviderFallbackConfig() {
     agents: {
       defaults: {
         model: {
-          primary: "openai-codex/gpt-5.4",
-          fallbacks: ["deepseek/deepseek-chat", "google/gemini-2.5-flash"],
+          primary: "openai/gpt-4o",
+          fallbacks: ["openai/gpt-4o-mini", "google/gemini-2.5-flash"],
         },
       },
     },
@@ -76,7 +77,7 @@ async function expectDeepseekFallbackError(
   getLastFormattedAssistant: () => unknown,
 ) {
   await expect(promise).rejects.toBeInstanceOf(MockedFailoverError);
-  await expect(promise).rejects.toThrow(`deepseek/deepseek-chat: ${DEEPSEEK_ERROR_MESSAGE}`);
+  await expect(promise).rejects.toThrow(`openai/gpt-4o: ${DEEPSEEK_ERROR_MESSAGE}`);
   expect(mockedIsRateLimitAssistantError).toHaveBeenCalledWith(DEEPSEEK_ASSISTANT_MATCHER);
   expect(getLastFormattedAssistant()).toEqual(DEEPSEEK_ASSISTANT_MATCHER);
 }
@@ -100,15 +101,15 @@ describe("runEmbeddedPiAgent cross-provider fallback error handling", () => {
         lastAssistant: makeAssistantMessageFixture({
           stopReason: "error",
           errorMessage: "You have hit your ChatGPT usage limit (plus plan).",
-          provider: "openai-codex",
-          model: "gpt-5.4",
+          provider: "openai",
+          model: "gpt-4o",
           content: [],
         }),
         currentAttemptAssistant: makeAssistantMessageFixture({
           stopReason: "error",
           errorMessage: DEEPSEEK_ERROR_MESSAGE,
-          provider: "deepseek",
-          model: "deepseek-chat",
+          provider: "openai",
+          model: "gpt-4o",
           content: [],
         }),
       }),
@@ -132,8 +133,8 @@ describe("runEmbeddedPiAgent cross-provider fallback error handling", () => {
         lastAssistant: makeAssistantMessageFixture({
           stopReason: "error",
           errorMessage: DEEPSEEK_ERROR_MESSAGE,
-          provider: "deepseek",
-          model: "deepseek-chat",
+          provider: "openai",
+          model: "gpt-4o",
           content: [],
         }),
         currentAttemptAssistant: undefined,
