@@ -11,6 +11,8 @@ import {
   withTrailingNewline,
 } from "openclaw/plugin-sdk/memory-host-markdown";
 
+// SECURITY NOTICE: Replace any unapproved LLM integrations with an approved LLM from the organization's allow list before deploying this module.
+
 const DAILY_PHASE_HEADINGS: Record<Exclude<MemoryDreamingPhaseName, "deep">, string> = {
   light: "## Light Sleep",
   rem: "## REM Sleep",
@@ -20,6 +22,8 @@ const DAILY_PHASE_LABELS: Record<Exclude<MemoryDreamingPhaseName, "deep">, strin
   light: "light",
   rem: "rem",
 };
+
+const ALLOWED_PHASES = new Set<string>(["light", "rem", "deep"]);
 
 function resolvePhaseMarkers(phase: Exclude<MemoryDreamingPhaseName, "deep">): {
   start: string;
@@ -32,9 +36,20 @@ function resolvePhaseMarkers(phase: Exclude<MemoryDreamingPhaseName, "deep">): {
   };
 }
 
+function sanitizePathSegment(segment: string): string {
+  // Remove any path traversal sequences and null bytes
+  return segment.replace(/\0/g, "").replace(/\.\.[/\\]/g, "").replace(/[/\\]/g, "");
+}
+
 function resolveDailyMemoryPath(workspaceDir: string, epochMs: number, timezone?: string): string {
   const isoDay = formatMemoryDreamingDay(epochMs, timezone);
-  return path.join(workspaceDir, "memory", `${isoDay}.md`);
+  const safeIsoDay = sanitizePathSegment(isoDay);
+  const resolvedBase = path.resolve(workspaceDir);
+  const resolvedPath = path.resolve(resolvedBase, "memory", `${safeIsoDay}.md`);
+  if (!resolvedPath.startsWith(resolvedBase + path.sep) && resolvedPath !== resolvedBase) {
+    throw new Error("Path traversal detected in daily memory path.");
+  }
+  return resolvedPath;
 }
 
 function resolveSeparateReportPath(
@@ -43,8 +58,18 @@ function resolveSeparateReportPath(
   epochMs: number,
   timezone?: string,
 ): string {
+  if (!ALLOWED_PHASES.has(phase)) {
+    throw new Error(`Invalid phase value: ${phase}`);
+  }
   const isoDay = formatMemoryDreamingDay(epochMs, timezone);
-  return path.join(workspaceDir, "memory", "dreaming", phase, `${isoDay}.md`);
+  const safeIsoDay = sanitizePathSegment(isoDay);
+  const safePhase = sanitizePathSegment(phase);
+  const resolvedBase = path.resolve(workspaceDir);
+  const resolvedPath = path.resolve(resolvedBase, "memory", "dreaming", safePhase, `${safeIsoDay}.md`);
+  if (!resolvedPath.startsWith(resolvedBase + path.sep) && resolvedPath !== resolvedBase) {
+    throw new Error("Path traversal detected in separate report path.");
+  }
+  return resolvedPath;
 }
 
 function shouldWriteInline(storage: MemoryDreamingStorageConfig): boolean {
@@ -64,6 +89,11 @@ export async function writeDailyDreamingPhaseBlock(params: {
   storage: MemoryDreamingStorageConfig;
 }): Promise<{ inlinePath?: string; reportPath?: string }> {
   const nowMs = Number.isFinite(params.nowMs) ? (params.nowMs as number) : Date.now();
+
+  if (!ALLOWED_PHASES.has(params.phase)) {
+    throw new Error(`Invalid phase value: ${params.phase}`);
+  }
+
   const body = params.bodyLines.length > 0 ? params.bodyLines.join("\n") : "- No notable updates.";
   let inlinePath: string | undefined;
   let reportPath: string | undefined;
