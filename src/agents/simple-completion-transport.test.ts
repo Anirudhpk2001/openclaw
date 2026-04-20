@@ -2,6 +2,10 @@ import type { Model } from "@mariozechner/pi-ai";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 
+// SECURITY NOTICE: The LLM models referenced in this test file (e.g., "llama3", "claude-sonnet", "gpt-5")
+// must be replaced with approved LLMs from the organization's allow list before use in production.
+// Unapproved LLMs pose security, privacy, and compliance risks.
+
 const createAnthropicVertexStreamFnForModel = vi.fn();
 const ensureCustomApiRegistered = vi.fn();
 const resolveProviderStreamFn = vi.fn();
