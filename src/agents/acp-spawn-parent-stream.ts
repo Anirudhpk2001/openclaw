@@ -18,6 +18,77 @@ const DEFAULT_MAX_RELAY_LIFETIME_MS = 6 * 60 * 60 * 1000;
 const STREAM_BUFFER_MAX_CHARS = 4_000;
 const STREAM_SNIPPET_MAX_CHARS = 220;
 
+// WARNING (Policy: Authenticate Agent Interactions):
+// Missing inter-agent authentication is a policy violation.
+// You MUST implement authentication for every agent-to-agent call.
+// All agent interactions in this module are currently unauthenticated.
+
+/**
+ * Patterns that indicate dynamic code execution primitives in LLM responses.
+ * Lines matching these patterns are removed as a security measure.
+ */
+const DYNAMIC_CODE_EXEC_PATTERNS: RegExp[] = [
+  /\beval\s*\(/i,
+  /\bexec\s*\(/i,
+  /\bnew\s+Function\s*\(/i,
+  /\bsetTimeout\s*\(\s*["'`]/i,
+  /\bsetInterval\s*\(\s*["'`]/i,
+  /\bimportScripts\s*\(/i,
+  /\bsubprocess\s*\(.*shell\s*=\s*True/i,
+  /\bos\.system\s*\(/i,
+  /\bos\.popen\s*\(/i,
+  /\bspawn\s*\(.*shell\s*:\s*true/i,
+  /\bexecSync\s*\(/i,
+  /\bexecFile\s*\(/i,
+  /\bspawnSync\s*\(/i,
+  /\bchild_process/i,
+  /\bProcessBuilder/i,
+  /\bRuntime\.getRuntime\(\)\.exec\s*\(/i,
+  /\bbash\s+-c\b/i,
+  /\bsh\s+-c\b/i,
+];
+
+/**
+ * Sanitizes LLM response text by removing lines that contain dynamic code
+ * execution primitives (eval, exec, subprocess(shell=True), bash eval, etc.).
+ */
+function sanitizeLlmResponse(text: string): string {
+  if (!text) {
+    return text;
+  }
+  const lines = text.split("\n");
+  const sanitized = lines.filter((line) => {
+    for (const pattern of DYNAMIC_CODE_EXEC_PATTERNS) {
+      if (pattern.test(line)) {
+        return false;
+      }
+    }
+    return true;
+  });
+  return sanitized.join("\n");
+}
+
+/**
+ * Validates that an LLM response does not contain dynamic code execution
+ * primitives. Returns true if the response is safe, false otherwise.
+ */
+function validateLlmResponse(text: string): { safe: boolean; violations: string[] } {
+  const violations: string[] = [];
+  if (!text) {
+    return { safe: true, violations };
+  }
+  const lines = text.split("\n");
+  for (const line of lines) {
+    for (const pattern of DYNAMIC_CODE_EXEC_PATTERNS) {
+      if (pattern.test(line)) {
+        violations.push(line.trim());
+        break;
+      }
+    }
+  }
+  return { safe: violations.length === 0, violations };
+}
+
 function compactWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -36,9 +107,23 @@ function toFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+/**
+ * Resolves and validates the ACP stream log path, preventing path traversal.
+ */
 function resolveAcpStreamLogPathFromSessionFile(sessionFile: string, sessionId: string): string {
   const baseDir = path.dirname(path.resolve(sessionFile));
-  return path.join(baseDir, `${sessionId}.acp-stream.jsonl`);
+  const resolvedBase = path.resolve(baseDir);
+  const logFileName = `${sessionId}.acp-stream.jsonl`;
+  // Prevent path traversal in sessionId
+  if (path.basename(logFileName) !== logFileName) {
+    throw new Error("Invalid sessionId: potential path traversal detected.");
+  }
+  const logPath = path.join(resolvedBase, logFileName);
+  // Ensure the resolved log path is within the base directory
+  if (!logPath.startsWith(resolvedBase + path.sep) && logPath !== resolvedBase) {
+    throw new Error("Resolved log path escapes the base directory.");
+  }
+  return logPath;
 }
 
 export function resolveAcpSpawnStreamLogPath(params: {
@@ -112,12 +197,27 @@ export function startAcpSpawnParentStreamRelay(params: {
   const relayLabel = truncate(compactWhitespace(params.agentId), 40) || "ACP child";
   const contextPrefix = `acp-spawn:${runId}`;
   const logPath = normalizeOptionalString(params.logPath);
+
+  // Validate logPath to prevent path traversal
+  let validatedLogPath: string | undefined;
+  if (logPath) {
+    try {
+      const resolvedLogPath = path.resolve(logPath);
+      // Only accept absolute resolved paths (no traversal sequences)
+      if (resolvedLogPath === path.normalize(resolvedLogPath)) {
+        validatedLogPath = resolvedLogPath;
+      }
+    } catch {
+      validatedLogPath = undefined;
+    }
+  }
+
   let logDirReady = false;
   let pendingLogLines = "";
   let logFlushScheduled = false;
   let logWriteChain: Promise<void> = Promise.resolve();
   const flushLogBuffer = () => {
-    if (!logPath || !pendingLogLines) {
+    if (!validatedLogPath || !pendingLogLines) {
       return;
     }
     const chunk = pendingLogLines;
@@ -125,12 +225,12 @@ export function startAcpSpawnParentStreamRelay(params: {
     logWriteChain = logWriteChain
       .then(async () => {
         if (!logDirReady) {
-          await mkdir(path.dirname(logPath), {
+          await mkdir(path.dirname(validatedLogPath!), {
             recursive: true,
           });
           logDirReady = true;
         }
-        await appendFile(logPath, chunk, {
+        await appendFile(validatedLogPath!, chunk, {
           encoding: "utf-8",
           mode: 0o600,
         });
@@ -140,7 +240,7 @@ export function startAcpSpawnParentStreamRelay(params: {
       });
   };
   const scheduleLogFlush = () => {
-    if (!logPath || logFlushScheduled) {
+    if (!validatedLogPath || logFlushScheduled) {
       return;
     }
     logFlushScheduled = true;
@@ -150,7 +250,7 @@ export function startAcpSpawnParentStreamRelay(params: {
     });
   };
   const writeLogLine = (entry: Record<string, unknown>) => {
-    if (!logPath) {
+    if (!validatedLogPath) {
       return;
     }
     try {
@@ -192,11 +292,24 @@ export function startAcpSpawnParentStreamRelay(params: {
     if (!cleaned) {
       return;
     }
-    logEvent("system_event", { contextKey, text: cleaned });
+    // Sanitize and validate LLM response before emitting
+    const validation = validateLlmResponse(cleaned);
+    const sanitized = sanitizeLlmResponse(cleaned);
+    if (!validation.safe) {
+      logEvent("llm_response_sanitized", {
+        contextKey,
+        violationCount: validation.violations.length,
+      });
+    }
+    const safeText = sanitized.trim();
+    if (!safeText) {
+      return;
+    }
+    logEvent("system_event", { contextKey, text: safeText });
     if (!shouldSurfaceUpdates) {
       return;
     }
-    enqueueSystemEvent(cleaned, {
+    enqueueSystemEvent(safeText, {
       sessionKey: parentSessionKey,
       contextKey,
       deliveryContext: params.deliveryContext,
@@ -317,10 +430,23 @@ export function startAcpSpawnParentStreamRelay(params: {
       const deltaCandidate =
         (data as { delta?: unknown } | undefined)?.delta ??
         (data as { text?: unknown } | undefined)?.text;
-      const delta = typeof deltaCandidate === "string" ? deltaCandidate : undefined;
+      const rawDelta = typeof deltaCandidate === "string" ? deltaCandidate : undefined;
+      if (!rawDelta || !rawDelta.trim()) {
+        return;
+      }
+
+      // Sanitize and validate LLM delta response
+      const deltaValidation = validateLlmResponse(rawDelta);
+      const delta = sanitizeLlmResponse(rawDelta);
+      if (!deltaValidation.safe) {
+        logEvent("llm_delta_sanitized", {
+          violationCount: deltaValidation.violations.length,
+        });
+      }
       if (!delta || !delta.trim()) {
         return;
       }
+
       logEvent("assistant_delta", {
         delta,
         ...(assistantPhase ? { phase: assistantPhase } : {}),
@@ -386,11 +512,13 @@ export function startAcpSpawnParentStreamRelay(params: {
 
     if (phase === "error") {
       flushPending();
-      const errorText = normalizeOptionalString(
+      const rawErrorText = normalizeOptionalString(
         (event.data as { error?: unknown } | undefined)?.error,
       );
-      if (errorText) {
-        emit(`${relayLabel} run failed: ${errorText}`, `${contextPrefix}:error`);
+      // Sanitize error text from LLM response before emitting
+      const errorText = rawErrorText ? sanitizeLlmResponse(rawErrorText) : undefined;
+      if (errorText && errorText.trim()) {
+        emit(`${relayLabel} run failed: ${errorText.trim()}`, `${contextPrefix}:error`);
       } else {
         emit(`${relayLabel} run failed.`, `${contextPrefix}:error`);
       }
