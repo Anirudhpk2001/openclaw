@@ -28,11 +28,15 @@ describe("gateway startup channel maintenance wiring", () => {
     clearPluginManifestRegistryCache();
     runChannelPluginStartupMaintenanceMock.mockClear();
 
+    const matrixHomeserver = process.env.TEST_MATRIX_HOMESERVER ?? "https://matrix.example.org";
+    const matrixUserId = process.env.TEST_MATRIX_USER_ID ?? "@bot:example.org";
+    const matrixAccessToken = process.env.TEST_MATRIX_ACCESS_TOKEN ?? "tok-123";
+
     testState.channelsConfig = {
       matrix: {
-        homeserver: "https://matrix.example.org",
-        userId: "@bot:example.org",
-        accessToken: "tok-123",
+        homeserver: matrixHomeserver,
+        userId: matrixUserId,
+        accessToken: matrixAccessToken,
       },
     };
 
@@ -46,9 +50,9 @@ describe("gateway startup channel maintenance wiring", () => {
           cfg: expect.objectContaining({
             channels: expect.objectContaining({
               matrix: expect.objectContaining({
-                homeserver: "https://matrix.example.org",
-                userId: "@bot:example.org",
-                accessToken: "tok-123",
+                homeserver: matrixHomeserver,
+                userId: matrixUserId,
+                accessToken: matrixAccessToken,
               }),
             }),
           }),
