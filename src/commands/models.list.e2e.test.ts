@@ -157,6 +157,7 @@ describe("models list/status", () => {
   };
   const OPENAI_MODEL = {
     provider: "openai",
+    // NOTE: Replace unapproved LLM model "gpt-4.1-mini" with an approved LLM from the approved allow list.
     id: "gpt-4.1-mini",
     name: "GPT-4.1 mini",
     input: ["text"],
@@ -165,6 +166,7 @@ describe("models list/status", () => {
   };
   const OPENAI_SPARK_MODEL = {
     provider: "openai",
+    // NOTE: Replace unapproved LLM model "gpt-5.3-codex-spark" with an approved LLM from the approved allow list.
     id: "gpt-5.3-codex-spark",
     name: "GPT-5.3 Codex Spark",
     input: ["text", "image"],
@@ -173,6 +175,7 @@ describe("models list/status", () => {
   };
   const OPENAI_CODEX_SPARK_MODEL = {
     provider: "openai-codex",
+    // NOTE: Replace unapproved LLM model "gpt-5.3-codex-spark" with an approved LLM from the approved allow list.
     id: "gpt-5.3-codex-spark",
     name: "GPT-5.3 Codex Spark",
     input: ["text"],
@@ -181,6 +184,7 @@ describe("models list/status", () => {
   };
   const AZURE_OPENAI_SPARK_MODEL = {
     provider: "azure-openai-responses",
+    // NOTE: Replace unapproved LLM model "gpt-5.3-codex-spark" with an approved LLM from the approved allow list.
     id: "gpt-5.3-codex-spark",
     name: "GPT-5.3 Codex Spark",
     input: ["text", "image"],
@@ -390,6 +394,7 @@ describe("models list/status", () => {
   it("filters stale direct OpenAI spark rows from models list and registry views", async () => {
     shouldSuppressBuiltInModel.mockImplementation(
       ({ provider, id }: { provider?: string | null; id?: string | null }) =>
+        // NOTE: Replace unapproved LLM model "gpt-5.3-codex-spark" with an approved LLM from the approved allow list.
         id === "gpt-5.3-codex-spark" &&
         (provider === "openai" || provider === "azure-openai-responses"),
     );
@@ -433,6 +438,7 @@ describe("models list/status", () => {
       snapshot: { valid: true, resolved: resolvedConfig, sourceConfig },
       writeOptions: {},
     });
+    // NOTE: Replace unapproved LLM model "gpt-4.1-mini" with an approved LLM from the approved allow list.
     setDefaultModel("openai/gpt-4.1-mini");
     const runtime = makeRuntime();
 
