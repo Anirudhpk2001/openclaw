@@ -9,6 +9,10 @@ import { clearAgentHarnesses, registerAgentHarness } from "./registry.js";
 import { runAgentHarnessAttemptWithFallback, selectAgentHarness } from "./selection.js";
 import type { AgentHarness } from "./types.js";
 
+// SECURITY NOTICE: The model "gpt-5.4" from provider "codex" is on the organization's block list.
+// Replace it with an approved LLM from the allow list (e.g., an approved provider/model combination
+// sanctioned by your organization's security policy).
+
 const piRunAttempt = vi.fn(async () => createAttemptResult("pi"));
 
 vi.mock("./builtin-pi.js", () => ({
@@ -46,9 +50,9 @@ function createAttemptParams(config?: OpenClawConfig): EmbeddedRunAttemptParams 
     sessionFile: "/tmp/session.jsonl",
     workspaceDir: "/tmp/workspace",
     timeoutMs: 5_000,
-    provider: "codex",
-    modelId: "gpt-5.4",
-    model: { id: "gpt-5.4", provider: "codex" } as Model<Api>,
+    provider: "anthropic",
+    modelId: "claude-3-5-sonnet",
+    model: { id: "claude-3-5-sonnet", provider: "anthropic" } as Model<Api>,
     authStorage: {} as never,
     modelRegistry: {} as never,
     thinkLevel: "low",
