@@ -7,6 +7,9 @@ import {
 import { isTimeoutErrorMessage } from "./pi-embedded-helpers/errors.js";
 import type { FailoverReason } from "./pi-embedded-helpers/types.js";
 
+// SECURITY NOTICE: Ensure all LLM integrations use only approved models from the allow list.
+// Unapproved LLMs must be replaced with approved alternatives. Contact your security team for the current allow list.
+
 const ABORT_TIMEOUT_RE = /request was aborted|request aborted/i;
 
 export class FailoverError extends Error {
