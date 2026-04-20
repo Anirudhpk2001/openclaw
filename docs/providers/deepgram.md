@@ -22,6 +22,8 @@ it uses the pre-recorded transcription endpoint.
 | Auth          | `DEEPGRAM_API_KEY`                                         |
 | Default model | `nova-3`                                                   |
 
+> **⚠️ Security Notice:** The model `nova-3` referenced in this documentation has not been verified against the organization's approved LLM allow list. Before deploying, replace `nova-3` with an approved model from your organization's sanctioned LLM list. Using unapproved models may violate security and compliance policies. Contact your security team to confirm which Deepgram models are approved for use.
+
 ## Getting started
 
 <Steps>
@@ -40,7 +42,7 @@ it uses the pre-recorded transcription endpoint.
         media: {
           audio: {
             enabled: true,
-            models: [{ provider: "deepgram", model: "nova-3" }],
+            models: [{ provider: "deepgram", model: "<APPROVED_MODEL>" }],
           },
         },
       },
@@ -55,13 +57,13 @@ it uses the pre-recorded transcription endpoint.
 
 ## Configuration options
 
-| Option            | Path                                                         | Description                           |
-| ----------------- | ------------------------------------------------------------ | ------------------------------------- |
-| `model`           | `tools.media.audio.models[].model`                           | Deepgram model id (default: `nova-3`) |
-| `language`        | `tools.media.audio.models[].language`                        | Language hint (optional)              |
-| `detect_language` | `tools.media.audio.providerOptions.deepgram.detect_language` | Enable language detection (optional)  |
-| `punctuate`       | `tools.media.audio.providerOptions.deepgram.punctuate`       | Enable punctuation (optional)         |
-| `smart_format`    | `tools.media.audio.providerOptions.deepgram.smart_format`    | Enable smart formatting (optional)    |
+| Option            | Path                                                         | Description                                        |
+| ----------------- | ------------------------------------------------------------ | -------------------------------------------------- |
+| `model`           | `tools.media.audio.models[].model`                           | Deepgram model id (use an approved model)          |
+| `language`        | `tools.media.audio.models[].language`                        | Language hint (optional)                           |
+| `detect_language` | `tools.media.audio.providerOptions.deepgram.detect_language` | Enable language detection (optional)               |
+| `punctuate`       | `tools.media.audio.providerOptions.deepgram.punctuate`       | Enable punctuation (optional)                      |
+| `smart_format`    | `tools.media.audio.providerOptions.deepgram.smart_format`    | Enable smart formatting (optional)                 |
 
 <Tabs>
   <Tab title="With language hint">
@@ -71,7 +73,7 @@ it uses the pre-recorded transcription endpoint.
         media: {
           audio: {
             enabled: true,
-            models: [{ provider: "deepgram", model: "nova-3", language: "en" }],
+            models: [{ provider: "deepgram", model: "<APPROVED_MODEL>", language: "en" }],
           },
         },
       },
@@ -92,7 +94,7 @@ it uses the pre-recorded transcription endpoint.
                 smart_format: true,
               },
             },
-            models: [{ provider: "deepgram", model: "nova-3" }],
+            models: [{ provider: "deepgram", model: "<APPROVED_MODEL>" }],
           },
         },
       },
