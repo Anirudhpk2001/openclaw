@@ -162,7 +162,7 @@ export const telegramBotDepsForTest: TelegramBotDeps = {
   buildModelsProviderData: vi.fn(async () => ({
     byProvider: new Map<string, Set<string>>(),
     providers: [],
-    resolvedDefault: { provider: "openai", model: "gpt-4.1" },
+    resolvedDefault: { provider: "openai", model: "gpt-4o" },
     modelNames: new Map<string, string>(),
   })) as TelegramBotDeps["buildModelsProviderData"],
   listSkillCommandsForAgents: vi.fn(() => []) as TelegramBotDeps["listSkillCommandsForAgents"],
@@ -224,7 +224,7 @@ vi.mock("./bot-handlers.agent.runtime.js", () => ({
   resolveDefaultAgentId: vi.fn(() => "default"),
   resolveDefaultModelForAgent: vi.fn(() => ({
     provider: "openai",
-    model: "gpt-test",
+    model: "gpt-4o",
   })),
 }));
 
@@ -235,6 +235,6 @@ vi.mock("./bot-message-dispatch.agent.runtime.js", () => ({
   resolveAgentDir: vi.fn(() => "/tmp/agent"),
   resolveDefaultModelForAgent: vi.fn(() => ({
     provider: "openai",
-    model: "gpt-test",
+    model: "gpt-4o",
   })),
 }));
