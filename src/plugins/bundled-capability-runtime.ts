@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
 import { openBoundaryFileSync } from "../infra/boundary-file-read.js";
@@ -164,15 +165,17 @@ function recordCapabilityLoadError(
   message: string,
 ): void {
   record.status = "error";
-  record.error = message;
+  // Sanitize error message to avoid leaking sensitive path or system information
+  const safeMessage = message.replace(/\\/g, "/").replace(/\/[^\s/]+/g, "[path]");
+  record.error = safeMessage;
   registry.plugins.push(record);
   registry.diagnostics.push({
     level: "error",
     pluginId: record.id,
     source: record.source,
-    message: `failed to load plugin: ${message}`,
+    message: `failed to load plugin: ${safeMessage}`,
   });
-  log.error(`[plugins] ${record.id} failed to load from ${record.source}: ${message}`);
+  log.error(`[plugins] ${record.id} failed to load: plugin load error`);
 }
 
 export function loadBundledCapabilityRuntimeRegistry(params: {
@@ -231,7 +234,7 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
     manifestRegistry.plugins.map((record) => [record.rootDir, record]),
   );
   const seenPluginIds = new Set<string>();
-  const repoRoot = process.cwd();
+  const repoRoot = path.resolve(process.cwd());
 
   for (const candidate of discovery.candidates) {
     const manifest = manifestByRoot.get(candidate.rootDir);
@@ -243,27 +246,81 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
     }
     seenPluginIds.add(manifest.id);
 
+    let resolvedSource: string;
+    if (env?.VITEST && params.pluginSdkResolution === "dist") {
+      const repoEntryPath = resolveBundledPluginRepoEntryPath({
+        rootDir: repoRoot,
+        pluginId: manifest.id,
+        preferBuilt: true,
+      });
+      if (repoEntryPath) {
+        const normalizedRepoEntry = path.resolve(repoEntryPath);
+        // Validate that the resolved repo entry path stays within the repo root
+        if (!normalizedRepoEntry.startsWith(repoRoot + path.sep) && normalizedRepoEntry !== repoRoot) {
+          const record = createCapabilityPluginRecord({
+            id: manifest.id,
+            name: manifest.name,
+            description: manifest.description,
+            version: manifest.version,
+            source: candidate.source,
+            rootDir: candidate.rootDir,
+            workspaceDir: candidate.workspaceDir,
+          });
+          recordCapabilityLoadError(
+            registry,
+            record,
+            "plugin entry path escapes repo root",
+          );
+          continue;
+        }
+        resolvedSource = normalizedRepoEntry;
+      } else {
+        resolvedSource = path.resolve(candidate.source);
+      }
+    } else {
+      resolvedSource = path.resolve(candidate.source);
+    }
+
+    // Validate that the resolved candidate source stays within the candidate rootDir
+    const normalizedCandidateRoot = path.resolve(candidate.rootDir);
+    const normalizedCandidateSource = path.resolve(candidate.source);
+    if (
+      !normalizedCandidateSource.startsWith(normalizedCandidateRoot + path.sep) &&
+      normalizedCandidateSource !== normalizedCandidateRoot
+    ) {
+      const record = createCapabilityPluginRecord({
+        id: manifest.id,
+        name: manifest.name,
+        description: manifest.description,
+        version: manifest.version,
+        source: candidate.source,
+        rootDir: candidate.rootDir,
+        workspaceDir: candidate.workspaceDir,
+      });
+      recordCapabilityLoadError(
+        registry,
+        record,
+        "plugin entry path escapes plugin root or fails alias checks",
+      );
+      continue;
+    }
+
     const record = createCapabilityPluginRecord({
       id: manifest.id,
       name: manifest.name,
       description: manifest.description,
       version: manifest.version,
-      source:
-        env?.VITEST && params.pluginSdkResolution === "dist"
-          ? (resolveBundledPluginRepoEntryPath({
-              rootDir: repoRoot,
-              pluginId: manifest.id,
-              preferBuilt: true,
-            }) ?? candidate.source)
-          : candidate.source,
+      source: resolvedSource,
       rootDir: candidate.rootDir,
       workspaceDir: candidate.workspaceDir,
     });
 
     const opened = openBoundaryFileSync({
       absolutePath: record.source,
-      rootPath: record.source === candidate.source ? candidate.rootDir : repoRoot,
-      boundaryLabel: record.source === candidate.source ? "plugin root" : "repo root",
+      rootPath: record.source === resolvedSource && resolvedSource !== normalizedCandidateSource
+        ? repoRoot
+        : candidate.rootDir,
+      boundaryLabel: record.source === normalizedCandidateSource ? "plugin root" : "repo root",
       rejectHardlinks: false,
       skipLexicalRootCheck: true,
     });
