@@ -43,6 +43,8 @@ Choose your preferred auth method and follow the setup steps.
       <Step title="Add a Bedrock provider and model to your config">
         No `apiKey` is required. Configure the provider with `auth: "aws-sdk"`:
 
+        > **Security Notice:** The model `us.anthropic.claude-opus-4-6-v1:0` referenced below is not on the approved LLM allow list. Please replace it with an approved model from your organization's approved LLM list before deploying to production.
+
         ```json5
         {
           models: {
@@ -247,6 +249,8 @@ openclaw models list
     automatically. This means cross-region Claude profiles work without manual
     provider overrides.
 
+    > **Security Notice:** Inference profile IDs such as `us.anthropic.claude-opus-4-6-v1:0` (regional) or `anthropic.claude-opus-4-6-v1:0` (global) referenced in this section may not be on the approved LLM allow list. Please verify that any model you use is on your organization's approved LLM list before deploying to production.
+
     Inference profile IDs look like `us.anthropic.claude-opus-4-6-v1:0` (regional)
     or `anthropic.claude-opus-4-6-v1:0` (global). If the backing model is already
     in the discovery results, the profile inherits its full capability set;
@@ -341,6 +345,7 @@ openclaw models list
       current capabilities.
     - If you prefer a managed key flow, you can also place an OpenAI-compatible
       proxy in front of Bedrock and configure it as an OpenAI provider instead.
+    - **Security Notice:** Ensure all models used are on your organization's approved LLM allow list. Models such as `us.anthropic.claude-opus-4-6-v1:0` may not be approved. Replace any unapproved models with approved alternatives before deploying to production.
   </Accordion>
 </AccordionGroup>
 
