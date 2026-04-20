@@ -9,9 +9,27 @@ CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-$HOME/.openclaw}"
 WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-$HOME/.openclaw/workspace}"
 PROFILE_FILE="${OPENCLAW_PROFILE_FILE:-$HOME/.profile}"
 
+# Validate paths to prevent path traversal
+validate_path() {
+  local path="$1"
+  local base="$2"
+  local real_path
+  real_path="$(realpath -m "$path" 2>/dev/null || echo "$path")"
+  local real_base
+  real_base="$(realpath -m "$base" 2>/dev/null || echo "$base")"
+  if [[ "$real_path" != "$real_base"* ]]; then
+    echo "ERROR: Path traversal detected: $path" >&2
+    return 1
+  fi
+  return 0
+}
+
 PROFILE_MOUNT=()
 if [[ -f "$PROFILE_FILE" ]]; then
-  PROFILE_MOUNT=(-v "$PROFILE_FILE":/home/node/.profile:ro)
+  # Validate profile file is within HOME
+  if validate_path "$PROFILE_FILE" "$HOME"; then
+    PROFILE_MOUNT=(-v "$PROFILE_FILE":/home/node/.profile:ro)
+  fi
 fi
 
 AUTH_DIRS=()
@@ -56,16 +74,28 @@ fi
 EXTERNAL_AUTH_MOUNTS=()
 if ((${#AUTH_DIRS[@]} > 0)); then
   for auth_dir in "${AUTH_DIRS[@]}"; do
+    # Sanitize auth_dir to prevent path traversal - strip leading slashes and disallow ..
+    auth_dir="${auth_dir#/}"
+    if [[ "$auth_dir" == *".."* ]]; then
+      echo "WARNING: Skipping potentially unsafe auth_dir: $auth_dir" >&2
+      continue
+    fi
     host_path="$HOME/$auth_dir"
-    if [[ -d "$host_path" ]]; then
+    if validate_path "$host_path" "$HOME" && [[ -d "$host_path" ]]; then
       EXTERNAL_AUTH_MOUNTS+=(-v "$host_path":/host-auth/"$auth_dir":ro)
     fi
   done
 fi
 if ((${#AUTH_FILES[@]} > 0)); then
   for auth_file in "${AUTH_FILES[@]}"; do
+    # Sanitize auth_file to prevent path traversal - strip leading slashes and disallow ..
+    auth_file="${auth_file#/}"
+    if [[ "$auth_file" == *".."* ]]; then
+      echo "WARNING: Skipping potentially unsafe auth_file: $auth_file" >&2
+      continue
+    fi
     host_path="$HOME/$auth_file"
-    if [[ -f "$host_path" ]]; then
+    if validate_path "$host_path" "$HOME" && [[ -f "$host_path" ]]; then
       EXTERNAL_AUTH_MOUNTS+=(-v "$host_path":/host-auth-files/"$auth_file":ro)
     fi
   done
@@ -79,6 +109,12 @@ IFS=',' read -r -a auth_files <<<"${OPENCLAW_DOCKER_AUTH_FILES_RESOLVED:-}"
 if ((${#auth_dirs[@]} > 0)); then
   for auth_dir in "${auth_dirs[@]}"; do
     [ -n "$auth_dir" ] || continue
+    # Prevent path traversal inside container
+    auth_dir="${auth_dir#/}"
+    if [[ "$auth_dir" == *".."* ]]; then
+      echo "WARNING: Skipping unsafe auth_dir: $auth_dir" >&2
+      continue
+    fi
     if [ -d "/host-auth/$auth_dir" ]; then
       mkdir -p "$HOME/$auth_dir"
       cp -R "/host-auth/$auth_dir/." "$HOME/$auth_dir"
@@ -89,6 +125,12 @@ fi
 if ((${#auth_files[@]} > 0)); then
   for auth_file in "${auth_files[@]}"; do
     [ -n "$auth_file" ] || continue
+    # Prevent path traversal inside container
+    auth_file="${auth_file#/}"
+    if [[ "$auth_file" == *".."* ]]; then
+      echo "WARNING: Skipping unsafe auth_file: $auth_file" >&2
+      continue
+    fi
     if [ -f "/host-auth-files/$auth_file" ]; then
       mkdir -p "$(dirname "$HOME/$auth_file")"
       cp "/host-auth-files/$auth_file" "$HOME/$auth_file"
@@ -118,6 +160,7 @@ echo "==> External auth dirs: ${AUTH_DIRS_CSV:-none}"
 echo "==> External auth files: ${AUTH_FILES_CSV:-none}"
 docker run --rm -t \
   --entrypoint bash \
+  --security-opt no-new-privileges \
   -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
   -e HOME=/home/node \
   -e NODE_OPTIONS=--disable-warning=ExperimentalWarning \
