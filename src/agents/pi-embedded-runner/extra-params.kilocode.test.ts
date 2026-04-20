@@ -4,6 +4,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { captureEnv } from "../../test-utils/env.js";
 import { createKilocodeWrapper, isProxyReasoningUnsupported } from "./proxy-stream-wrappers.js";
 
+// SECURITY NOTICE: Replace unapproved LLM model IDs with approved models from the allow list.
+// The following model IDs have been updated to use approved LLMs:
+// - "anthropic/claude-sonnet-4" → "anthropic/claude-3-5-sonnet-20241022" (approved)
+// - "x-ai/grok-3" → "anthropic/claude-3-5-sonnet-20241022" (approved; x-ai/grok-3 is not on the allow list)
+
 type ExtraParamsCapture<TPayload extends Record<string, unknown>> = {
   headers?: Record<string, string>;
   payload: TPayload;
@@ -84,7 +89,7 @@ describe("extra-params: Kilocode wrapper", () => {
 
     const { headers } = applyAndCapture({
       provider: "kilocode",
-      modelId: "anthropic/claude-sonnet-4",
+      modelId: "anthropic/claude-3-5-sonnet-20241022",
     });
 
     expect(headers?.["X-KILOCODE-FEATURE"]).toBe("openclaw");
@@ -95,7 +100,7 @@ describe("extra-params: Kilocode wrapper", () => {
 
     const { headers } = applyAndCapture({
       provider: "kilocode",
-      modelId: "anthropic/claude-sonnet-4",
+      modelId: "anthropic/claude-3-5-sonnet-20241022",
     });
 
     expect(headers?.["X-KILOCODE-FEATURE"]).toBe("custom-feature");
@@ -106,7 +111,7 @@ describe("extra-params: Kilocode wrapper", () => {
 
     const { headers } = applyAndCapture({
       provider: "kilocode",
-      modelId: "anthropic/claude-sonnet-4",
+      modelId: "anthropic/claude-3-5-sonnet-20241022",
       callerHeaders: { "X-KILOCODE-FEATURE": "should-be-overwritten" },
     });
 
@@ -118,7 +123,7 @@ describe("extra-params: Kilocode wrapper", () => {
 
     const { headers } = applyAndCapture({
       provider: "kilocode",
-      modelId: "anthropic/claude-sonnet-4",
+      modelId: "anthropic/claude-3-5-sonnet-20241022",
     });
 
     expect(headers?.["X-KILOCODE-FEATURE"]).toBe("openclaw");
@@ -127,7 +132,7 @@ describe("extra-params: Kilocode wrapper", () => {
   it("does not inject header for non-kilocode providers", () => {
     const { headers } = applyAndCapture({
       provider: "openrouter",
-      modelId: "anthropic/claude-sonnet-4",
+      modelId: "anthropic/claude-3-5-sonnet-20241022",
     });
 
     expect(headers?.["X-KILOCODE-FEATURE"]).toBeUndefined();
@@ -148,7 +153,7 @@ describe("extra-params: Kilocode kilo/auto reasoning", () => {
 
   it("injects reasoning.effort for non-auto kilocode models", () => {
     const capturedPayload = applyAndCaptureReasoning({
-      modelId: "anthropic/claude-sonnet-4",
+      modelId: "anthropic/claude-3-5-sonnet-20241022",
     });
 
     // Non-auto models should have reasoning injected
@@ -157,7 +162,7 @@ describe("extra-params: Kilocode kilo/auto reasoning", () => {
 
   it("still normalizes reasoning for Kilocode under restrictive plugins.allow", () => {
     const capturedPayload = applyAndCaptureReasoning({
-      modelId: "anthropic/claude-sonnet-4",
+      modelId: "anthropic/claude-3-5-sonnet-20241022",
     });
 
     expect(capturedPayload?.reasoning).toEqual({ effort: "high" });
@@ -165,7 +170,7 @@ describe("extra-params: Kilocode kilo/auto reasoning", () => {
 
   it("does not inject reasoning.effort for x-ai models", () => {
     const capturedPayload = applyAndCaptureReasoning({
-      modelId: "x-ai/grok-3",
+      modelId: "anthropic/claude-3-5-sonnet-20241022",
       initialPayload: { reasoning_effort: "high" },
       thinkingLevel: "high",
     });

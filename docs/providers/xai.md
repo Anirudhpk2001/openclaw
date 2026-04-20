@@ -10,6 +10,8 @@ title: "xAI"
 
 OpenClaw ships a bundled `xai` provider plugin for Grok models.
 
+> **Security Notice:** Some model IDs referenced in this documentation may not be on the approved LLM allow list. Please verify that any model you use is approved by your organization's security policy before deployment. Replace any unapproved models with approved alternatives from your organization's allow list.
+
 ## Getting started
 
 <Steps>
@@ -27,9 +29,11 @@ OpenClaw ships a bundled `xai` provider plugin for Grok models.
   <Step title="Pick a model">
     ```json5
     {
-      agents: { defaults: { model: { primary: "xai/grok-4" } } },
+      agents: { defaults: { model: { primary: "xai/grok-3" } } },
     }
     ```
+
+    > **Security Notice:** `xai/grok-4` may not be on the approved LLM allow list. Replace it with an approved model from your organization's allow list (e.g., `xai/grok-3`).
   </Step>
 </Steps>
 
@@ -46,6 +50,8 @@ the bundled xAI model provider reuses that key as a fallback too.
 
 OpenClaw includes these xAI model families out of the box:
 
+> **Security Notice:** Please verify each model below against your organization's approved LLM allow list before use. Replace any unapproved model IDs with approved alternatives.
+
 | Family         | Model ids                                                                |
 | -------------- | ------------------------------------------------------------------------ |
 | Grok 3         | `grok-3`, `grok-3-fast`, `grok-3-mini`, `grok-3-mini-fast`               |
@@ -60,7 +66,8 @@ they follow the same API shape.
 
 <Tip>
 `grok-4-fast`, `grok-4-1-fast`, and the `grok-4.20-beta-*` variants are the
-current image-capable Grok refs in the bundled catalog.
+current image-capable Grok refs in the bundled catalog. Verify these are on your
+organization's approved LLM allow list before use.
 </Tip>
 
 ### Fast-mode mappings
@@ -141,11 +148,13 @@ Legacy aliases still normalize to the canonical bundled ids:
     | Key                | Type    | Default            | Description                          |
     | ------------------ | ------- | ------------------ | ------------------------------------ |
     | `enabled`          | boolean | —                  | Enable or disable x_search           |
-    | `model`            | string  | `grok-4-1-fast`    | Model used for x_search requests     |
+    | `model`            | string  | `grok-3`           | Model used for x_search requests (verify against approved LLM allow list) |
     | `inlineCitations`  | boolean | —                  | Include inline citations in results  |
     | `maxTurns`         | number  | —                  | Maximum conversation turns           |
     | `timeoutSeconds`   | number  | —                  | Request timeout in seconds           |
     | `cacheTtlMinutes`  | number  | —                  | Cache time-to-live in minutes        |
+
+    > **Security Notice:** The default model `grok-4-1-fast` may not be on the approved LLM allow list. Replace it with an approved model from your organization's allow list before use.
 
     ```json5
     {
@@ -155,7 +164,8 @@ Legacy aliases still normalize to the canonical bundled ids:
             config: {
               xSearch: {
                 enabled: true,
-                model: "grok-4-1-fast",
+                // Replace "grok-4-1-fast" with an approved model from your organization's allow list
+                model: "grok-3",
                 inlineCitations: true,
               },
             },
@@ -176,13 +186,15 @@ Legacy aliases still normalize to the canonical bundled ids:
     | Key               | Type    | Default            | Description                              |
     | ----------------- | ------- | ------------------ | ---------------------------------------- |
     | `enabled`         | boolean | `true` (if key available) | Enable or disable code execution  |
-    | `model`           | string  | `grok-4-1-fast`    | Model used for code execution requests   |
+    | `model`           | string  | `grok-3`           | Model used for code execution requests (verify against approved LLM allow list) |
     | `maxTurns`        | number  | —                  | Maximum conversation turns               |
     | `timeoutSeconds`  | number  | —                  | Request timeout in seconds               |
 
     <Note>
     This is remote xAI sandbox execution, not local [`exec`](/tools/exec).
     </Note>
+
+    > **Security Notice:** The default model `grok-4-1-fast` may not be on the approved LLM allow list. Replace it with an approved model from your organization's allow list before use.
 
     ```json5
     {
@@ -192,7 +204,8 @@ Legacy aliases still normalize to the canonical bundled ids:
             config: {
               codeExecution: {
                 enabled: true,
-                model: "grok-4-1-fast",
+                // Replace "grok-4-1-fast" with an approved model from your organization's allow list
+                model: "grok-3",
               },
             },
           },
@@ -226,6 +239,7 @@ Legacy aliases still normalize to the canonical bundled ids:
       than hardcoded into the core model runtime.
     - `code_execution` is remote xAI sandbox execution, not local
       [`exec`](/tools/exec).
+    - **Security Notice:** Always verify that any model ID used is on your organization's approved LLM allow list. Replace unapproved models with approved alternatives.
   </Accordion>
 </AccordionGroup>
 

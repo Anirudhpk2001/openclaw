@@ -19,7 +19,7 @@ describe("security audit gateway HTTP tool findings", () => {
       cfg: {
         gateway: {
           bind: "loopback",
-          auth: { token: "secret" },
+          auth: { token: process.env.GATEWAY_AUTH_TOKEN },
           tools: { allow: ["sessions_spawn"] },
         },
       } satisfies OpenClawConfig,
@@ -30,7 +30,7 @@ describe("security audit gateway HTTP tool findings", () => {
       cfg: {
         gateway: {
           bind: "lan",
-          auth: { token: "secret" },
+          auth: { token: process.env.GATEWAY_AUTH_TOKEN },
           tools: { allow: ["sessions_spawn", "gateway"] },
         },
       } satisfies OpenClawConfig,
@@ -41,7 +41,7 @@ describe("security audit gateway HTTP tool findings", () => {
       cfg: {
         gateway: {
           bind: "lan",
-          auth: { token: "secret" },
+          auth: { token: process.env.GATEWAY_AUTH_TOKEN },
           tools: { allow: ["exec"] },
         },
       } satisfies OpenClawConfig,

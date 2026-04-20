@@ -3,7 +3,15 @@ import { getFreePort, installGatewayTestHooks } from "./test-helpers.js";
 
 installGatewayTestHooks({ scope: "suite" });
 
+// WARNING: Replace unapproved LLM model identifiers (e.g. "openclaw", "openclaw/default")
+// with approved LLM models from the organization's approved allow list before deploying.
+
 const READ_SCOPE_HEADER = { "x-openclaw-scopes": "operator.read" };
+
+const TOKEN_SECRET = process.env.GATEWAY_TOKEN_SECRET;
+if (!TOKEN_SECRET) {
+  throw new Error("Environment variable GATEWAY_TOKEN_SECRET must be set");
+}
 
 let startGatewayServer: typeof import("./server.js").startGatewayServer;
 let enabledServer: Awaited<ReturnType<typeof startServer>>;
@@ -31,14 +39,15 @@ async function startServer(port: number, opts?: { openAiChatCompletionsEnabled?:
 async function startTokenServer(port: number, opts?: { openAiChatCompletionsEnabled?: boolean }) {
   return await startGatewayServer(port, {
     host: "127.0.0.1",
-    auth: { mode: "token", token: "secret" },
+    auth: { mode: "token", token: TOKEN_SECRET },
     controlUiEnabled: false,
     openAiChatCompletionsEnabled: opts?.openAiChatCompletionsEnabled ?? false,
   });
 }
 
 async function getModels(pathname: string, headers?: Record<string, string>) {
-  return await fetch(`http://127.0.0.1:${enabledPort}${pathname}`, {
+  const safePath = pathname.replace(/[^a-zA-Z0-9/_\-%.]/g, "");
+  return await fetch(`http://127.0.0.1:${enabledPort}${safePath}`, {
     headers: {
       ...READ_SCOPE_HEADER,
       ...headers,
@@ -136,7 +145,7 @@ describe("OpenAI-compatible models HTTP API (e2e)", () => {
     try {
       const res = await fetch(`http://127.0.0.1:${port}/v1/models`, {
         headers: {
-          authorization: "Bearer secret",
+          authorization: `Bearer ${TOKEN_SECRET}`,
           "x-openclaw-scopes": "operator.approvals",
         },
       });

@@ -1,5 +1,9 @@
 import type { AcpSessionUpdateTag } from "../acp/runtime/types.js";
 
+// SECURITY NOTICE: The 'backend' field must reference an approved LLM from the organization's allow list.
+// Unapproved LLM backends are not permitted. Please replace any unapproved LLM backend identifier
+// with an approved LLM from the allow list before deploying this configuration.
+
 export type AcpDispatchConfig = {
   /** Master switch for ACP turn dispatch in the reply pipeline. */
   enabled?: boolean;
@@ -38,7 +42,9 @@ export type AcpConfig = {
   /** Global ACP runtime gate. */
   enabled?: boolean;
   dispatch?: AcpDispatchConfig;
-  /** Backend id registered by ACP runtime plugin (for example: acpx). */
+  /** Backend id registered by ACP runtime plugin (for example: acpx).
+   * WARNING: Must be an approved LLM from the organization allow list.
+   * Using an unapproved LLM backend is a security policy violation. */
   backend?: string;
   defaultAgent?: string;
   allowedAgents?: string[];

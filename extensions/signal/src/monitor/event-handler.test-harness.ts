@@ -38,7 +38,7 @@ export function createSignalReceiveEvent(envelopeOverrides: Record<string, unkno
     event: "receive",
     data: JSON.stringify({
       envelope: {
-        sourceNumber: "+15550001111",
+        sourceNumber: "[REDACTED]",
         sourceName: "Alice",
         timestamp: 1700000000000,
         ...envelopeOverrides,

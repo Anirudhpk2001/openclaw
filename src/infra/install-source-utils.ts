@@ -43,7 +43,8 @@ export async function withTempDir<T>(
   prefix: string,
   fn: (tmpDir: string) => Promise<T>,
 ): Promise<T> {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  const sanitizedPrefix = prefix.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), sanitizedPrefix));
   try {
     return await fn(tmpDir);
   } finally {
@@ -62,15 +63,22 @@ export async function resolveArchiveSourcePath(archivePath: string): Promise<
     }
 > {
   const resolved = resolveUserPath(archivePath);
-  if (!(await fileExists(resolved))) {
-    return { ok: false, error: `archive not found: ${resolved}` };
+
+  // Prevent path traversal: ensure resolved path does not escape expected boundaries
+  const normalizedResolved = path.normalize(resolved);
+  if (normalizedResolved.includes("\0")) {
+    return { ok: false, error: "invalid archive path" };
   }
 
-  if (!resolveArchiveKind(resolved)) {
-    return { ok: false, error: `unsupported archive: ${resolved}` };
+  if (!(await fileExists(normalizedResolved))) {
+    return { ok: false, error: "archive not found" };
   }
 
-  return { ok: true, path: resolved };
+  if (!resolveArchiveKind(normalizedResolved)) {
+    return { ok: false, error: "unsupported archive format" };
+  }
+
+  return { ok: true, path: normalizedResolved };
 }
 
 function toOptionalString(value: unknown): string | undefined {
@@ -108,8 +116,12 @@ function normalizeNpmPackEntry(
     (name && version ? `${name}@${version}` : undefined) ??
     (id ? parseResolvedSpecFromId(id) : undefined);
 
+  const rawFilename = toOptionalString(rec.filename);
+  // Sanitize filename to prevent path traversal: only allow basename
+  const safeFilename = rawFilename ? path.basename(rawFilename) : undefined;
+
   return {
-    filename: toOptionalString(rec.filename),
+    filename: safeFilename,
     metadata: {
       name,
       version,
@@ -174,7 +186,8 @@ function parsePackedArchiveFromStdout(stdout: string): string | undefined {
     const line = lines[index];
     const match = line?.match(/([^\s"']+\.tgz)/);
     if (match?.[1]) {
-      return match[1];
+      // Only return the basename to prevent path traversal
+      return path.basename(match[1]);
     }
   }
   return undefined;
@@ -200,6 +213,11 @@ async function findPackedArchiveInDir(cwd: string): Promise<string | undefined> 
   return sortedByMtime[0]?.name;
 }
 
+function validateNpmSpec(spec: string): boolean {
+  // Allow only safe npm spec characters: scoped packages, names, versions, tags
+  return /^(@[a-zA-Z0-9_.-]+\/)?[a-zA-Z0-9_.-]+([@][a-zA-Z0-9_.^~<>=*|-]*)?$/.test(spec);
+}
+
 export async function packNpmSpecToArchive(params: {
   spec: string;
   timeoutMs: number;
@@ -215,11 +233,22 @@ export async function packNpmSpecToArchive(params: {
       error: string;
     }
 > {
+  // Validate spec to prevent command injection
+  if (!validateNpmSpec(params.spec)) {
+    return { ok: false, error: "invalid npm spec" };
+  }
+
+  // Validate and normalize cwd to prevent path traversal
+  const normalizedCwd = path.normalize(params.cwd);
+  if (normalizedCwd.includes("\0")) {
+    return { ok: false, error: "invalid working directory" };
+  }
+
   const res = await runCommandWithTimeout(
     ["npm", "pack", params.spec, "--ignore-scripts", "--json"],
     {
       timeoutMs: Math.max(params.timeoutMs, 300_000),
-      cwd: params.cwd,
+      cwd: normalizedCwd,
       env: {
         COREPACK_ENABLE_DOWNLOAD_PROMPT: "0",
         NPM_CONFIG_IGNORE_SCRIPTS: "true",
@@ -234,26 +263,32 @@ export async function packNpmSpecToArchive(params: {
         error: `Package not found on npm: ${params.spec}. See https://docs.openclaw.ai/tools/plugin for installable plugins.`,
       };
     }
-    return { ok: false, error: `npm pack failed: ${raw}` };
+    return { ok: false, error: "npm pack failed" };
   }
 
   const parsedJson = parseNpmPackJsonOutput(res.stdout || "");
 
   let packed = parsedJson?.filename ?? parsePackedArchiveFromStdout(res.stdout || "");
   if (!packed) {
-    packed = await findPackedArchiveInDir(params.cwd);
+    packed = await findPackedArchiveInDir(normalizedCwd);
   }
   if (!packed) {
     return { ok: false, error: "npm pack produced no archive" };
   }
 
-  let archivePath = path.isAbsolute(packed) ? packed : path.join(params.cwd, packed);
+  // Ensure packed is only a basename to prevent path traversal
+  const safePackedName = path.basename(packed);
+  if (!safePackedName.endsWith(".tgz")) {
+    return { ok: false, error: "npm pack produced no archive" };
+  }
+
+  let archivePath = path.join(normalizedCwd, safePackedName);
   if (!(await fileExists(archivePath))) {
-    const fallbackPacked = await findPackedArchiveInDir(params.cwd);
+    const fallbackPacked = await findPackedArchiveInDir(normalizedCwd);
     if (!fallbackPacked) {
       return { ok: false, error: "npm pack produced no archive" };
     }
-    archivePath = path.join(params.cwd, fallbackPacked);
+    archivePath = path.join(normalizedCwd, path.basename(fallbackPacked));
   }
 
   return {

@@ -3,6 +3,10 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { loadBundledChannelSecretContractApi } from "./channel-contract-api.js";
 import { type ResolverContext, type SecretDefaults } from "./runtime-shared.js";
 
+// SECURITY NOTICE: If this codebase integrates with any LLM provider, ensure only approved LLMs
+// from the organization's allow list are used. Unapproved LLM usage violates security policy.
+// Contact your security team for the current list of approved LLM providers and models.
+
 export function collectChannelConfigAssignments(params: {
   config: OpenClawConfig;
   defaults: SecretDefaults | undefined;

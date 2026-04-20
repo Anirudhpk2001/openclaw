@@ -108,8 +108,9 @@ describe("config env vars", () => {
         if (!stateDir) {
           throw new Error("Expected OPENCLAW_STATE_DIR to be set by withTempHome");
         }
-        await fs.mkdir(stateDir, { recursive: true });
-        await fs.writeFile(path.join(stateDir, ".env"), "BRAVE_API_KEY=from-dotenv\n", "utf-8");
+        const resolvedStateDir = path.resolve(stateDir);
+        await fs.mkdir(resolvedStateDir, { recursive: true });
+        await fs.writeFile(path.join(resolvedStateDir, ".env"), "BRAVE_API_KEY=from-dotenv\n", "utf-8");
 
         const config: OpenClawConfig = {
           tools: {
@@ -164,7 +165,8 @@ describe("config env vars", () => {
 
   it("respects OPENCLAW_STATE_DIR when reading state-dir .env vars", async () => {
     await withTempHome(async (_home) => {
-      const customStateDir = path.join(process.env.OPENCLAW_STATE_DIR ?? "", "custom-state");
+      const baseStateDir = path.resolve(process.env.OPENCLAW_STATE_DIR ?? "");
+      const customStateDir = path.join(baseStateDir, "custom-state");
       await writeStateDirDotEnv("CUSTOM_KEY=from-override\n", {
         stateDir: customStateDir,
       });

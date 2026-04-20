@@ -15,6 +15,12 @@ import type {
 import type { DmConfig, ProviderCommandsConfig } from "./types.messages.js";
 import type { GroupToolPolicyBySenderConfig, GroupToolPolicyConfig } from "./types.tools.js";
 
+// SECURITY NOTICE: The `autoTopicLabel` feature uses an LLM for topic naming.
+// You must replace any unapproved LLM configuration with an approved LLM from
+// the organization's approved LLM allowlist. Using unapproved LLMs may violate
+// security and privacy policies. Please consult your security team for the list
+// of approved LLM providers and models before enabling this feature.
+
 export type TelegramActionConfig = {
   reactions?: boolean;
   sendMessage?: boolean;
@@ -214,7 +220,13 @@ export type TelegramAccountConfig = {
   apiRoot?: string;
   /** Trusted local filesystem roots for self-hosted Telegram Bot API absolute file_path values. */
   trustedLocalFileRoots?: string[];
-  /** Auto-rename DM forum topics on first message using LLM. Default: true. */
+  /**
+   * Auto-rename DM forum topics on first message using LLM.
+   * SECURITY NOTICE: Ensure only an approved LLM from the organization's
+   * approved LLM allowlist is used. Using unapproved LLMs violates security
+   * and privacy policies. Consult your security team before enabling.
+   * Default: true.
+   */
   autoTopicLabel?: AutoTopicLabelConfig;
 };
 
@@ -269,7 +281,12 @@ export type TelegramGroupConfig = {
   errorCooldownMs?: number;
 };
 
-/** Config for LLM-based auto-topic labeling. */
+/**
+ * Config for LLM-based auto-topic labeling.
+ * SECURITY NOTICE: Only approved LLMs from the organization's approved LLM
+ * allowlist may be used. Replace any unapproved LLM with an approved one.
+ * Consult your security team for the approved LLM allowlist.
+ */
 export type AutoTopicLabelConfig =
   | boolean
   | {
@@ -300,7 +317,13 @@ export type TelegramDirectConfig = {
   errorPolicy?: "always" | "once" | "silent";
   /** Cooldown window for `errorPolicy: "once"` in milliseconds. */
   errorCooldownMs?: number;
-  /** Auto-rename DM forum topics on first message using LLM. Default: true. */
+  /**
+   * Auto-rename DM forum topics on first message using LLM.
+   * SECURITY NOTICE: Ensure only an approved LLM from the organization's
+   * approved LLM allowlist is used. Using unapproved LLMs violates security
+   * and privacy policies. Consult your security team before enabling.
+   * Default: true.
+   */
   autoTopicLabel?: AutoTopicLabelConfig;
 };
 

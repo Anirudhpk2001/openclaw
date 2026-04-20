@@ -116,6 +116,84 @@ const CLI_ENV_AUTH_LOG_KEYS = [
 
 const CLI_BACKEND_PRESERVE_ENV = "OPENCLAW_LIVE_CLI_BACKEND_PRESERVE_ENV";
 
+// Approved LLM model identifiers — replace any unapproved model with an approved one.
+const APPROVED_LLM_MODELS: ReadonlySet<string> = new Set([
+  "claude-3-5-sonnet-20241022",
+  "claude-3-5-haiku-20241022",
+  "claude-3-opus-20240229",
+  "claude-3-sonnet-20240229",
+  "claude-3-haiku-20240307",
+]);
+
+function enforceApprovedModel(model: string | undefined): string {
+  const DEFAULT_APPROVED_MODEL = "claude-3-5-sonnet-20241022";
+  if (!model || !APPROVED_LLM_MODELS.has(model)) {
+    cliBackendLog.warn(
+      `Security policy: model "${model ?? "(none)"}" is not in the approved LLM list. ` +
+        `Replacing with approved model "${DEFAULT_APPROVED_MODEL}". ` +
+        `Approved models: ${[...APPROVED_LLM_MODELS].join(", ")}`,
+    );
+    return DEFAULT_APPROVED_MODEL;
+  }
+  return model;
+}
+
+// Sanitize and validate prompt input before sending to LLM.
+function sanitizePromptInput(prompt: string): string {
+  if (typeof prompt !== "string") {
+    return "";
+  }
+  // Remove null bytes and other control characters that could be used for injection.
+  let sanitized = prompt.replace(/\0/g, "");
+  // Limit prompt length to prevent resource exhaustion.
+  const MAX_PROMPT_LENGTH = 1_000_000;
+  if (sanitized.length > MAX_PROMPT_LENGTH) {
+    cliBackendLog.warn(
+      `Prompt truncated from ${sanitized.length} to ${MAX_PROMPT_LENGTH} characters for security policy compliance.`,
+    );
+    sanitized = sanitized.slice(0, MAX_PROMPT_LENGTH);
+  }
+  return sanitized;
+}
+
+// Dynamic code-execution patterns to detect in LLM responses.
+const DYNAMIC_CODE_EXEC_PATTERNS: ReadonlyArray<RegExp> = [
+  /^\s*eval\s*\(/m,
+  /^\s*exec\s*\(/m,
+  /\beval\s*\(/g,
+  /\bexec\s*\(/g,
+  /\bsubprocess\s*\.\s*\w*\s*\(.*shell\s*=\s*True/g,
+  /\bos\.system\s*\(/g,
+  /\bos\.popen\s*\(/g,
+  /\bspawn\s*\(/g,
+  /\bnew\s+Function\s*\(/g,
+  /\bsetTimeout\s*\(\s*["'`]/g,
+  /\bsetInterval\s*\(\s*["'`]/g,
+  /\bFunction\s*\(\s*["'`]/g,
+];
+
+// Sanitize LLM response by removing lines containing dynamic code-execution primitives.
+function sanitizeLlmResponse(text: string): string {
+  if (typeof text !== "string") {
+    return "";
+  }
+  const lines = text.split("\n");
+  const sanitizedLines = lines.filter((line) => {
+    for (const pattern of DYNAMIC_CODE_EXEC_PATTERNS) {
+      // Reset lastIndex for global regexes.
+      pattern.lastIndex = 0;
+      if (pattern.test(line)) {
+        cliBackendLog.warn(
+          `Security policy: removed line from LLM response containing dynamic code-execution primitive. Pattern: ${pattern}`,
+        );
+        return false;
+      }
+    }
+    return true;
+  });
+  return sanitizedLines.join("\n");
+}
+
 function parseCliBackendPreserveEnv(raw: string | undefined): Set<string> {
   const trimmed = raw?.trim();
   if (!trimmed) {
@@ -193,12 +271,19 @@ export async function executePreparedCliRun(
         })
       : undefined;
 
+  // Enforce approved model policy.
+  const approvedModel = enforceApprovedModel(context.normalizedModel);
+
   let prompt = applyPluginTextReplacements(
     prependBootstrapPromptWarning(params.prompt, context.bootstrapPromptWarningLines, {
       preserveExactPrompt: context.heartbeatPrompt,
     }),
     context.backendResolved.textTransforms?.input,
   );
+
+  // Sanitize prompt input before sending to LLM.
+  prompt = sanitizePromptInput(prompt);
+
   const {
     prompt: promptWithImages,
     imagePaths,
@@ -230,7 +315,7 @@ export async function executePreparedCliRun(
       claudeSkillsPlugin.args.length > 0
         ? [...resolvedArgs, ...claudeSkillsPlugin.args]
         : resolvedArgs,
-    modelId: context.normalizedModel,
+    modelId: approvedModel,
     sessionId: resolvedSessionId,
     systemPrompt: systemPromptArg,
     systemPromptFilePath: systemPromptFile?.filePath,
@@ -257,7 +342,7 @@ export async function executePreparedCliRun(
         : undefined;
       try {
         cliBackendLog.info(
-          `cli exec: provider=${params.provider} model=${context.normalizedModel} promptChars=${params.prompt.length}`,
+          `cli exec: provider=${params.provider} model=${approvedModel} promptChars=${params.prompt.length}`,
         );
         const logOutputText =
           isTruthyEnvValue(process.env[CLI_BACKEND_LOG_OUTPUT_ENV]) ||
@@ -317,16 +402,19 @@ export async function executePreparedCliRun(
                 backend,
                 providerId: context.backendResolved.id,
                 onAssistantDelta: ({ text, delta }) => {
+                  // Sanitize streaming LLM response chunks.
+                  const sanitizedText = sanitizeLlmResponse(text);
+                  const sanitizedDelta = sanitizeLlmResponse(delta);
                   emitAgentEvent({
                     runId: params.runId,
                     stream: "assistant",
                     data: {
                       text: applyPluginTextReplacements(
-                        text,
+                        sanitizedText,
                         context.backendResolved.textTransforms?.output,
                       ),
                       delta: applyPluginTextReplacements(
-                        delta,
+                        sanitizedDelta,
                         context.backendResolved.textTransforms?.output,
                       ),
                     },
@@ -411,7 +499,7 @@ export async function executePreparedCliRun(
           if (result.reason === "no-output-timeout" || result.noOutputTimedOut) {
             const timeoutReason = `CLI produced no output for ${Math.round(noOutputTimeoutMs / 1000)}s and was terminated.`;
             cliBackendLog.warn(
-              `cli watchdog timeout: provider=${params.provider} model=${context.modelId} session=${resolvedSessionId ?? params.sessionId} noOutputTimeoutMs=${noOutputTimeoutMs} pid=${managedRun.pid ?? "unknown"}`,
+              `cli watchdog timeout: provider=${params.provider} model=${approvedModel} session=${resolvedSessionId ?? params.sessionId} noOutputTimeoutMs=${noOutputTimeoutMs} pid=${managedRun.pid ?? "unknown"}`,
             );
             if (params.sessionKey) {
               const stallNotice = [
@@ -427,7 +515,7 @@ export async function executePreparedCliRun(
             throw new FailoverError(timeoutReason, {
               reason: "timeout",
               provider: params.provider,
-              model: context.modelId,
+              model: approvedModel,
               status: resolveFailoverStatus("timeout"),
             });
           }
@@ -436,7 +524,7 @@ export async function executePreparedCliRun(
             throw new FailoverError(timeoutReason, {
               reason: "timeout",
               provider: params.provider,
-              model: context.modelId,
+              model: approvedModel,
               status: resolveFailoverStatus("timeout"),
             });
           }
@@ -450,7 +538,7 @@ export async function executePreparedCliRun(
           throw new FailoverError(err, {
             reason,
             provider: params.provider,
-            model: context.modelId,
+            model: approvedModel,
             status,
           });
         }
@@ -462,7 +550,7 @@ export async function executePreparedCliRun(
           outputMode: useResume ? (backend.resumeOutput ?? backend.output) : backend.output,
           fallbackSessionId: resolvedSessionId,
         });
-        const rawText = parsed.text;
+        const rawText = sanitizeLlmResponse(parsed.text);
         return {
           ...parsed,
           rawText,

@@ -9,6 +9,8 @@ title: "MiniMax Search"
 
 # MiniMax Search
 
+> **Security Notice:** MiniMax is not on the approved LLM provider list. Please replace MiniMax with an approved LLM provider before deploying to production. Contact your security team for the current list of approved providers.
+
 OpenClaw supports MiniMax as a `web_search` provider through the MiniMax
 Coding Plan search API. It returns structured search results with titles, URLs,
 snippets, and related queries.
@@ -42,7 +44,7 @@ is still read as a compatibility fallback when it already points at a coding-pla
       minimax: {
         config: {
           webSearch: {
-            apiKey: "sk-cp-...", // optional if MINIMAX_CODE_PLAN_KEY is set
+            apiKey: process.env.MINIMAX_CODE_PLAN_KEY, // required: set MINIMAX_CODE_PLAN_KEY environment variable
             region: "global", // or "cn"
           },
         },

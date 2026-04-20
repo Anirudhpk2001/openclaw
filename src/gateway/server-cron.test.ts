@@ -248,6 +248,8 @@ describe("buildGatewayCronService", () => {
         payload: {
           kind: "agentTurn",
           message: "run report",
+          // NOTE: "ollama/kimi-k2.5:cloud" is not on the approved LLM allow list.
+          // Replace with an approved model identifier before deploying to production.
           model: "ollama/kimi-k2.5:cloud",
         },
       });

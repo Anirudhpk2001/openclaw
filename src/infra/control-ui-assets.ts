@@ -8,7 +8,8 @@ import { resolveOpenClawPackageRoot, resolveOpenClawPackageRootSync } from "./op
 const CONTROL_UI_DIST_PATH_SEGMENTS = ["dist", "control-ui", "index.html"] as const;
 
 export function resolveControlUiDistIndexPathForRoot(root: string): string {
-  return path.join(root, ...CONTROL_UI_DIST_PATH_SEGMENTS);
+  const resolved = path.resolve(root);
+  return path.join(resolved, ...CONTROL_UI_DIST_PATH_SEGMENTS);
 }
 
 export type ControlUiDistIndexHealth = {
@@ -46,18 +47,26 @@ export function resolveControlUiRepoRoot(
   const srcIndex = parts.lastIndexOf("src");
   if (srcIndex !== -1) {
     const root = parts.slice(0, srcIndex).join(path.sep);
-    if (controlUiFsRuntime.existsSync(path.join(root, "ui", "vite.config.ts"))) {
+    const viteConfigPath = path.join(root, "ui", "vite.config.ts");
+    const resolvedViteConfigPath = path.resolve(viteConfigPath);
+    if (
+      resolvedViteConfigPath.startsWith(path.resolve(root) + path.sep) &&
+      controlUiFsRuntime.existsSync(resolvedViteConfigPath)
+    ) {
       return root;
     }
   }
 
   let dir = path.dirname(normalized);
   for (let i = 0; i < 8; i++) {
+    const resolvedDir = path.resolve(dir);
+    const pkgPath = path.join(resolvedDir, "package.json");
+    const viteConfigPath = path.join(resolvedDir, "ui", "vite.config.ts");
     if (
-      controlUiFsRuntime.existsSync(path.join(dir, "package.json")) &&
-      controlUiFsRuntime.existsSync(path.join(dir, "ui", "vite.config.ts"))
+      controlUiFsRuntime.existsSync(pkgPath) &&
+      controlUiFsRuntime.existsSync(viteConfigPath)
     ) {
-      return dir;
+      return resolvedDir;
     }
     const parent = path.dirname(dir);
     if (parent === dir) {
@@ -94,13 +103,18 @@ export async function resolveControlUiDistIndexPath(
   for (const entrypoint of entrypointCandidates) {
     const distDir = path.dirname(entrypoint);
     if (path.basename(distDir) === "dist") {
-      return path.join(distDir, "control-ui", "index.html");
+      const candidate = path.join(distDir, "control-ui", "index.html");
+      const resolvedCandidate = path.resolve(candidate);
+      if (resolvedCandidate.startsWith(path.resolve(distDir) + path.sep)) {
+        return resolvedCandidate;
+      }
     }
   }
 
   const packageRoot = await resolveOpenClawPackageRoot({ argv1: normalized, moduleUrl });
   if (packageRoot) {
-    return path.join(packageRoot, "dist", "control-ui", "index.html");
+    const resolvedPackageRoot = path.resolve(packageRoot);
+    return path.join(resolvedPackageRoot, "dist", "control-ui", "index.html");
   }
 
   // Fallback: traverse up and find package.json with name "openclaw" + dist/control-ui/index.html
@@ -111,14 +125,19 @@ export async function resolveControlUiDistIndexPath(
   for (const startDir of fallbackStartDirs) {
     let dir = startDir;
     for (let i = 0; i < 8; i++) {
-      const pkgJsonPath = path.join(dir, "package.json");
-      const indexPath = path.join(dir, "dist", "control-ui", "index.html");
+      const resolvedDir = path.resolve(dir);
+      const pkgJsonPath = path.join(resolvedDir, "package.json");
+      const indexPath = path.join(resolvedDir, "dist", "control-ui", "index.html");
       if (controlUiFsRuntime.existsSync(pkgJsonPath)) {
         try {
           const raw = controlUiFsRuntime.readFileSync(pkgJsonPath, "utf-8");
           const parsed = JSON.parse(raw) as { name?: unknown };
-          if (parsed.name === "openclaw") {
-            return controlUiFsRuntime.existsSync(indexPath) ? indexPath : null;
+          if (typeof parsed.name === "string" && parsed.name === "openclaw") {
+            const resolvedIndexPath = path.resolve(indexPath);
+            if (!resolvedIndexPath.startsWith(resolvedDir + path.sep)) {
+              break;
+            }
+            return controlUiFsRuntime.existsSync(resolvedIndexPath) ? resolvedIndexPath : null;
           }
           // Stop at the first package boundary to avoid resolving through unrelated ancestors.
           break;
@@ -173,11 +192,19 @@ export function resolveControlUiRootOverrideSync(rootOverride: string): string |
   try {
     const stats = controlUiFsRuntime.statSync(resolved);
     if (stats.isFile()) {
-      return path.basename(resolved) === "index.html" ? path.dirname(resolved) : null;
+      if (path.basename(resolved) !== "index.html") {
+        return null;
+      }
+      const dir = path.dirname(resolved);
+      return dir;
     }
     if (stats.isDirectory()) {
       const indexPath = path.join(resolved, "index.html");
-      return controlUiFsRuntime.existsSync(indexPath) ? resolved : null;
+      const resolvedIndexPath = path.resolve(indexPath);
+      if (!resolvedIndexPath.startsWith(resolved + path.sep) && resolvedIndexPath !== path.join(resolved, "index.html")) {
+        return null;
+      }
+      return controlUiFsRuntime.existsSync(resolvedIndexPath) ? resolved : null;
     }
   } catch {
     return null;
@@ -242,9 +269,14 @@ export function resolveControlUiRootSync(opts: ControlUiRootResolveOptions = {})
   addCandidate(candidates, path.join(cwd, "dist", "control-ui"));
 
   for (const dir of candidates) {
-    const indexPath = path.join(dir, "index.html");
-    if (controlUiFsRuntime.existsSync(indexPath)) {
-      return dir;
+    const resolvedDir = path.resolve(dir);
+    const indexPath = path.join(resolvedDir, "index.html");
+    const resolvedIndexPath = path.resolve(indexPath);
+    if (
+      resolvedIndexPath.startsWith(resolvedDir + path.sep) &&
+      controlUiFsRuntime.existsSync(resolvedIndexPath)
+    ) {
+      return resolvedDir;
     }
   }
   return null;
@@ -311,24 +343,34 @@ export async function ensureControlUiAssetsBuilt(
     };
   }
 
-  const indexPath = resolveControlUiDistIndexPathForRoot(repoRoot);
+  const resolvedRepoRoot = path.resolve(repoRoot);
+  const indexPath = resolveControlUiDistIndexPathForRoot(resolvedRepoRoot);
   if (controlUiFsRuntime.existsSync(indexPath)) {
     return { ok: true, built: false };
   }
 
-  const uiScript = path.join(repoRoot, "scripts", "ui.js");
-  if (!controlUiFsRuntime.existsSync(uiScript)) {
+  const uiScript = path.join(resolvedRepoRoot, "scripts", "ui.js");
+  const resolvedUiScript = path.resolve(uiScript);
+  if (!resolvedUiScript.startsWith(resolvedRepoRoot + path.sep)) {
     return {
       ok: false,
       built: false,
-      message: `Control UI assets missing but ${uiScript} is unavailable.`,
+      message: `Control UI assets missing but ui script path is invalid.`,
+    };
+  }
+  if (!controlUiFsRuntime.existsSync(resolvedUiScript)) {
+    return {
+      ok: false,
+      built: false,
+      message: `Control UI assets missing but ${resolvedUiScript} is unavailable.`,
     };
   }
 
   runtime.log("Control UI assets missing; building (ui:build, auto-installs UI deps)…");
 
-  const build = await runCommandWithTimeout([process.execPath, uiScript, "build"], {
-    cwd: repoRoot,
+  const execPath = path.resolve(process.execPath);
+  const build = await runCommandWithTimeout([execPath, resolvedUiScript, "build"], {
+    cwd: resolvedRepoRoot,
     timeoutMs: opts?.timeoutMs ?? 10 * 60_000,
   });
   if (build.code !== 0) {

@@ -28,6 +28,174 @@ const CLAUDE_KNOWN_MARKETPLACES_PATH = path.join(
   "known_marketplaces.json",
 );
 
+// Suspicious command patterns for uploaded file content scanning
+const SUSPICIOUS_COMMAND_PATTERNS: RegExp[] = [
+  /\balias\b/gi,
+  /\brg\b|\bripgrep\b/gi,
+  /\bcurl\b/gi,
+  /\brm\b/gi,
+  /\becho\b/gi,
+  /\bdd\b/gi,
+  /\bgit\b/gi,
+  /\btar\b/gi,
+  /\bchmod\b/gi,
+  /\bchown\b/gi,
+  /\bfsck\b/gi,
+  /\bwget\b/gi,
+  /\bnc\b|\bnetcat\b/gi,
+  /\bnmap\b/gi,
+  /\bpython\b|\bpython3\b/gi,
+  /\bperl\b/gi,
+  /\bruby\b/gi,
+  /\bnode\b|\bnodejs\b/gi,
+  /\bbash\b|\bsh\b|\bzsh\b|\bksh\b/gi,
+  /\bpowershell\b|\bpwsh\b/gi,
+  /\bcmd\.exe\b/gi,
+  /\beval\b/gi,
+  /\bexec\b/gi,
+  /\bsystem\b/gi,
+  /\bspawn\b/gi,
+  /\bsudo\b/gi,
+  /\bsu\b/gi,
+  /\bchroot\b/gi,
+  /\bmkdir\b/gi,
+  /\btouch\b/gi,
+  /\bcat\b/gi,
+  /\bgrep\b/gi,
+  /\bawk\b/gi,
+  /\bsed\b/gi,
+  /\bfind\b/gi,
+  /\bxargs\b/gi,
+  /\bkill\b/gi,
+  /\bpkill\b/gi,
+  /\bps\b/gi,
+  /\bnetstat\b/gi,
+  /\bifconfig\b/gi,
+  /\biptables\b/gi,
+  /\bcrontab\b/gi,
+  /\bat\b/gi,
+  /\bssh\b/gi,
+  /\bscp\b/gi,
+  /\brsync\b/gi,
+  /\bftp\b/gi,
+  /\btelnet\b/gi,
+  /\bmount\b/gi,
+  /\bumount\b/gi,
+  /\bfdisk\b/gi,
+  /\bmkfs\b/gi,
+  /\bbase64\b/gi,
+  // Base64 encoded content pattern
+  /(?:[A-Za-z0-9+/]{4}){10,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?/g,
+  // Leetspeak patterns for common commands
+  /\b3ch0\b|\b3x3c\b|\bc4t\b|\bgr3p\b|\bs3d\b|\b4wk\b/gi,
+];
+
+// Singapore PII patterns
+const SINGAPORE_PII_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  // NRIC/FIN: S/T/F/G followed by 7 digits and a letter
+  { pattern: /\b[STFG]\d{7}[A-Z]\b/gi, label: "NRIC/FIN" },
+  // Passport numbers (generic alphanumeric)
+  { pattern: /\b[A-Z]{1,2}\d{6,9}\b/g, label: "Passport" },
+  // Singapore phone numbers
+  { pattern: /\b(?:\+65[\s-]?)?[689]\d{3}[\s-]?\d{4}\b/g, label: "PhoneNumber" },
+  // Email addresses
+  { pattern: /\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/g, label: "Email" },
+  // Bank account numbers (generic)
+  { pattern: /\b\d{10,16}\b/g, label: "BankAccount" },
+  // Credit/debit card numbers
+  { pattern: /\b(?:\d{4}[\s\-]?){3}\d{4}\b/g, label: "CardNumber" },
+  // CPF account numbers (similar to NRIC format but also standalone 9-digit)
+  { pattern: /\b\d{9}\b/g, label: "CPF" },
+  // IP addresses
+  { pattern: /\b(?:\d{1,3}\.){3}\d{1,3}\b/g, label: "IPAddress" },
+  // MAC addresses
+  { pattern: /\b(?:[0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}\b/g, label: "MACAddress" },
+  // GPS coordinates
+  { pattern: /\b[-+]?(?:[1-8]?\d(?:\.\d+)?|90(?:\.0+)?),\s*[-+]?(?:180(?:\.0+)?|(?:1[0-7]\d|[1-9]?\d)(?:\.\d+)?)\b/g, label: "GPSCoordinates" },
+  // SingPass / MyInfo identifiers (treat as NRIC pattern above, plus generic session tokens)
+  { pattern: /\bsingpass[_\-]?id\s*[:=]\s*\S+/gi, label: "SingPassIdentifier" },
+  { pattern: /\bmyinfo[_\-]?id\s*[:=]\s*\S+/gi, label: "MyInfoIdentifier" },
+  // Authentication tokens / session identifiers (Bearer tokens, JWT-like)
+  { pattern: /\bBearer\s+[A-Za-z0-9\-._~+/]+=*/g, label: "AuthToken" },
+  { pattern: /\b[A-Za-z0-9\-_]{20,}\.[A-Za-z0-9\-_]{20,}\.[A-Za-z0-9\-_]{20,}\b/g, label: "JWT" },
+  // IMEI
+  { pattern: /\b\d{15}\b/g, label: "IMEI" },
+  // Date of birth patterns (common formats)
+  { pattern: /\b(?:0?[1-9]|[12]\d|3[01])[\/\-](?:0?[1-9]|1[0-2])[\/\-](?:19|20)\d{2}\b/g, label: "DateOfBirth" },
+];
+
+// General PII patterns (cross-jurisdiction)
+const GENERAL_PII_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  // SSN
+  { pattern: /\b\d{3}-\d{2}-\d{4}\b/g, label: "SSN" },
+  // Passport (generic)
+  { pattern: /\b[A-Z]{1,2}\d{6,9}\b/g, label: "Passport" },
+  // Driver's license (generic US)
+  { pattern: /\b[A-Z]{1,2}\d{6,8}\b/g, label: "DriversLicense" },
+  // Credit card
+  { pattern: /\b(?:\d{4}[\s\-]?){3}\d{4}\b/g, label: "CreditCard" },
+  // Email
+  { pattern: /\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/g, label: "Email" },
+  // Phone (generic)
+  { pattern: /\b(?:\+?1[\s\-.]?)?\(?\d{3}\)?[\s\-.]?\d{3}[\s\-.]?\d{4}\b/g, label: "PhoneNumber" },
+  // IP address
+  { pattern: /\b(?:\d{1,3}\.){3}\d{1,3}\b/g, label: "IPAddress" },
+  // MAC address
+  { pattern: /\b(?:[0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}\b/g, label: "MACAddress" },
+  // Financial account numbers (generic long digit strings)
+  { pattern: /\b\d{10,16}\b/g, label: "FinancialAccount" },
+  // VIN
+  { pattern: /\b[A-HJ-NPR-Z0-9]{17}\b/g, label: "VIN" },
+  // GPS / fine location
+  { pattern: /\b[-+]?(?:[1-8]?\d(?:\.\d+)?|90(?:\.0+)?),\s*[-+]?(?:180(?:\.0+)?|(?:1[0-7]\d|[1-9]?\d)(?:\.\d+)?)\b/g, label: "FineLocation" },
+];
+
+/**
+ * Scans content for suspicious shell commands/executables and replaces them.
+ */
+function removeSuspiciousCommands(content: string): string {
+  let sanitized = content;
+  for (const pattern of SUSPICIOUS_COMMAND_PATTERNS) {
+    sanitized = sanitized.replace(pattern, "<suspicious_content_removed>");
+  }
+  return sanitized;
+}
+
+/**
+ * Redacts Singapore PII from content.
+ */
+function redactSingaporePii(content: string): string {
+  let redacted = content;
+  for (const { pattern } of SINGAPORE_PII_PATTERNS) {
+    redacted = redacted.replace(pattern, "REDACTED");
+  }
+  return redacted;
+}
+
+/**
+ * Redacts general PII from content.
+ */
+function redactGeneralPii(content: string): string {
+  let redacted = content;
+  for (const { pattern } of GENERAL_PII_PATTERNS) {
+    redacted = redacted.replace(pattern, "REDACTED");
+  }
+  return redacted;
+}
+
+/**
+ * Applies all content security checks to uploaded/downloaded file content:
+ * 1. Removes suspicious commands
+ * 2. Redacts Singapore PII
+ * 3. Redacts general PII
+ */
+function sanitizeUploadedFileContent(content: string): string {
+  let sanitized = removeSuspiciousCommands(content);
+  sanitized = redactSingaporePii(sanitized);
+  sanitized = redactGeneralPii(sanitized);
+  return sanitized;
+}
+
 type MarketplaceLogger = {
   info?: (message: string) => void;
   warn?: (message: string) => void;
@@ -257,9 +425,12 @@ function parseMarketplaceManifest(
   raw: string,
   sourceLabel: string,
 ): { ok: true; manifest: MarketplaceManifest } | { ok: false; error: string } {
+  // Apply content security checks to the raw manifest content
+  const sanitizedRaw = sanitizeUploadedFileContent(raw);
+
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(sanitizedRaw);
   } catch (err) {
     return { ok: false, error: `invalid marketplace JSON at ${sourceLabel}: ${String(err)}` };
   }
@@ -325,7 +496,10 @@ async function readClaudeKnownMarketplaces(): Promise<Record<string, KnownMarket
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(await fs.readFile(knownPath, "utf-8"));
+    const rawContent = await fs.readFile(knownPath, "utf-8");
+    // Apply content security checks
+    const sanitizedContent = sanitizeUploadedFileContent(rawContent);
+    parsed = JSON.parse(sanitizedContent);
   } catch {
     return {};
   }
@@ -446,10 +620,46 @@ async function cloneMarketplaceRepo(params: {
     return { ok: false, error: `unsupported marketplace source: ${params.source}` };
   }
 
+  // Validate the URL to prevent SSRF
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(normalized.url);
+  } catch {
+    return { ok: false, error: `invalid marketplace source URL: ${params.source}` };
+  }
+
+  // Only allow https and git protocols; block private/internal network ranges
+  if (!["https:", "git:"].includes(parsedUrl.protocol)) {
+    return { ok: false, error: `disallowed protocol in marketplace source: ${parsedUrl.protocol}` };
+  }
+
+  const blockedHostPatterns = [
+    /^localhost$/i,
+    /^127\./,
+    /^10\./,
+    /^172\.(1[6-9]|2\d|3[01])\./,
+    /^192\.168\./,
+    /^::1$/,
+    /^0\.0\.0\.0$/,
+    /^169\.254\./,
+  ];
+  for (const blocked of blockedHostPatterns) {
+    if (blocked.test(parsedUrl.hostname)) {
+      return { ok: false, error: `blocked internal host in marketplace source: ${parsedUrl.hostname}` };
+    }
+  }
+
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-marketplace-"));
   const repoDir = path.join(tmpDir, "repo");
+
+  // Build argv without shell interpolation; use only safe, validated values
   const argv = ["git", "clone", "--depth", "1"];
   if (normalized.ref) {
+    // Validate ref to prevent injection
+    if (!/^[A-Za-z0-9._\-/]+$/.test(normalized.ref)) {
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+      return { ok: false, error: `invalid ref in marketplace source: ${normalized.ref}` };
+    }
     argv.push("--branch", normalized.ref);
   }
   argv.push(normalized.url, repoDir);
@@ -459,10 +669,12 @@ async function cloneMarketplaceRepo(params: {
   });
   if (res.code !== 0) {
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
-    const detail = res.stderr.trim() || res.stdout.trim() || "git clone failed";
+    // Sanitize error output to prevent log injection
+    const rawDetail = res.stderr.trim() || res.stdout.trim() || "git clone failed";
+    const detail = sanitizeForLog(rawDetail);
     return {
       ok: false,
-      error: `failed to clone marketplace source ${normalized.label}: ${detail}`,
+      error: `failed to clone marketplace source ${sanitizeForLog(normalized.label)}: ${detail}`,
     };
   }
 
@@ -734,6 +946,40 @@ async function downloadUrlToTempFile(
       error: string;
     }
 > {
+  // Validate URL to prevent SSRF
+  let parsedDownloadUrl: URL;
+  try {
+    parsedDownloadUrl = new URL(url);
+  } catch {
+    return { ok: false, error: formatMarketplaceDownloadError(url, "invalid URL") };
+  }
+
+  if (!["https:", "http:"].includes(parsedDownloadUrl.protocol)) {
+    return {
+      ok: false,
+      error: formatMarketplaceDownloadError(url, `disallowed protocol: ${parsedDownloadUrl.protocol}`),
+    };
+  }
+
+  const blockedDownloadHostPatterns = [
+    /^localhost$/i,
+    /^127\./,
+    /^10\./,
+    /^172\.(1[6-9]|2\d|3[01])\./,
+    /^192\.168\./,
+    /^::1$/,
+    /^0\.0\.0\.0$/,
+    /^169\.254\./,
+  ];
+  for (const blocked of blockedDownloadHostPatterns) {
+    if (blocked.test(parsedDownloadUrl.hostname)) {
+      return {
+        ok: false,
+        error: formatMarketplaceDownloadError(url, `blocked internal host: ${parsedDownloadUrl.hostname}`),
+      };
+    }
+  }
+
   let sourceFileName = "plugin.tgz";
   let tmpDir: string | undefined;
   try {

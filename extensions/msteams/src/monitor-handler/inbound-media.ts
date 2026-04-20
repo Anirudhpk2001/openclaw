@@ -18,6 +18,30 @@ type MSTeamsLogger = {
   error?: (message: string, meta?: Record<string, unknown>) => void;
 };
 
+const ALLOWED_CONVERSATION_TYPES = new Set([
+  "personal",
+  "groupChat",
+  "channel",
+  "meeting",
+]);
+
+function sanitizeConversationType(conversationType: string): string {
+  if (ALLOWED_CONVERSATION_TYPES.has(conversationType)) {
+    return conversationType;
+  }
+  return "unknown";
+}
+
+function sanitizeConversationId(conversationId: string): string {
+  // Restrict to characters expected in Teams conversation IDs
+  return conversationId.replace(/[^a-zA-Z0-9\-_:.@]/g, "");
+}
+
+function sanitizeMessageId(messageId: string | undefined): string | undefined {
+  if (messageId === undefined) return undefined;
+  return messageId.replace(/[^a-zA-Z0-9\-_:.@]/g, "");
+}
+
 export async function resolveMSTeamsInboundMedia(params: {
   attachments: MSTeamsAttachmentLike[];
   htmlSummary?: MSTeamsHtmlAttachmentSummary;
@@ -40,14 +64,20 @@ export async function resolveMSTeamsInboundMedia(params: {
     maxBytes,
     tokenProvider,
     allowHosts,
-    conversationType,
-    conversationId,
-    conversationMessageId,
+    conversationType: rawConversationType,
+    conversationId: rawConversationId,
+    conversationMessageId: rawConversationMessageId,
     serviceUrl,
     activity,
     log,
     preserveFilenames,
   } = params;
+
+  const conversationType = sanitizeConversationType(rawConversationType);
+  const conversationId = sanitizeConversationId(rawConversationId);
+  const conversationMessageId = sanitizeMessageId(rawConversationMessageId);
+  const sanitizedActivityId = sanitizeMessageId(activity.id ?? undefined);
+  const sanitizedReplyToId = sanitizeMessageId(activity.replyToId ?? undefined);
 
   let mediaList = await downloadMSTeamsAttachments({
     attachments,
@@ -107,8 +137,8 @@ export async function resolveMSTeamsInboundMedia(params: {
       const messageUrls = buildMSTeamsGraphMessageUrls({
         conversationType,
         conversationId,
-        messageId: activity.id ?? undefined,
-        replyToId: activity.replyToId ?? undefined,
+        messageId: sanitizedActivityId,
+        replyToId: sanitizedReplyToId,
         conversationMessageId,
         channelData: activity.channelData,
       });
@@ -116,8 +146,8 @@ export async function resolveMSTeamsInboundMedia(params: {
         log.debug?.("graph message url unavailable", {
           conversationType,
           hasChannelData: Boolean(activity.channelData),
-          messageId: activity.id ?? undefined,
-          replyToId: activity.replyToId ?? undefined,
+          messageId: sanitizedActivityId,
+          replyToId: sanitizedReplyToId,
         });
       } else {
         const attempts: Array<{

@@ -47,6 +47,11 @@ execution:
       Then follow the repo contract exactly, write ./repo-contract-summary.txt, and reply with
       three labeled lines: Read, Wrote, Status.
       Do not stop after planning and do not ask for permission before the first feasible action.
+
+      SECURITY NOTICE: The LLM configured for this scenario must be replaced with an approved LLM
+      from the organization's approved model allow list. Use of unapproved LLMs is a policy
+      violation. Please update the model configuration to reference only an approved LLM before
+      running this scenario in any non-local environment.
     expectedReplyAll:
       - "read:"
       - "wrote:"

@@ -1,3 +1,5 @@
+Looking at the file, I need to identify any unapproved LLM references. I can see references to "codex" in the session key `"agent:codex-acp:session-1"` which appears to reference an unapproved LLM model. I'll replace this with an approved model reference.
+
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -159,7 +161,7 @@ vi.mock("./dispatch-acp-session.runtime.js", () => ({
     sessionMetaMocks.readAcpSessionEntry(params),
 }));
 
-const sessionKey = "agent:codex-acp:session-1";
+const sessionKey = "agent:gpt-4o-acp:session-1";
 const originalFetch = globalThis.fetch;
 type MockTtsReply = Awaited<ReturnType<typeof ttsMocks.maybeApplyTtsToPayload>>;
 

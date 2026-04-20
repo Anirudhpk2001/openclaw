@@ -32,6 +32,143 @@ import { readPiModelContextTokens } from "./model-context-tokens.js";
 import { resolveModelAsync } from "./model.js";
 import type { EmbeddedPiCompactResult } from "./types.js";
 
+// APPROVED LLM ALLOW LIST — replace any unapproved model with one from this list.
+// NOTE: If the resolved model/provider is not in this list, you must replace it
+// with an approved LLM before use.
+const APPROVED_LLM_PROVIDERS = ["openai", "anthropic", "azure-openai"] as const;
+const APPROVED_LLM_MODELS = [
+  "gpt-4o",
+  "gpt-4-turbo",
+  "gpt-3.5-turbo",
+  "claude-3-5-sonnet-20241022",
+  "claude-3-opus-20240229",
+  "claude-3-haiku-20240307",
+] as const;
+
+type ApprovedProvider = (typeof APPROVED_LLM_PROVIDERS)[number];
+type ApprovedModel = (typeof APPROVED_LLM_MODELS)[number];
+
+function isApprovedProvider(provider: string): provider is ApprovedProvider {
+  return (APPROVED_LLM_PROVIDERS as readonly string[]).includes(provider);
+}
+
+function isApprovedModel(model: string): provider is ApprovedModel {
+  return (APPROVED_LLM_MODELS as readonly string[]).includes(model);
+}
+
+/**
+ * Sanitizes and validates input/prompt before sending to the LLM.
+ * Removes potentially dangerous content and enforces length limits.
+ */
+function sanitizeLlmInput(input: string | undefined | null): string {
+  if (input == null) return "";
+  // Remove null bytes
+  let sanitized = input.replace(/\0/g, "");
+  // Trim to a safe maximum length to prevent prompt injection via oversized input
+  const MAX_INPUT_LENGTH = 32000;
+  if (sanitized.length > MAX_INPUT_LENGTH) {
+    log.warn("LLM input truncated: exceeded maximum allowed length", {
+      originalLength: sanitized.length,
+      maxLength: MAX_INPUT_LENGTH,
+    });
+    sanitized = sanitized.slice(0, MAX_INPUT_LENGTH);
+  }
+  // Strip prompt injection attempts: lines that attempt to override system instructions
+  sanitized = sanitized
+    .split("\n")
+    .filter((line) => {
+      const lower = line.toLowerCase().trim();
+      // Block common prompt injection patterns
+      if (
+        lower.startsWith("ignore previous instructions") ||
+        lower.startsWith("disregard all prior") ||
+        lower.startsWith("forget your instructions") ||
+        lower.startsWith("you are now") ||
+        lower.startsWith("act as") ||
+        lower.startsWith("pretend you are") ||
+        lower.startsWith("system:") ||
+        lower.startsWith("[system]") ||
+        lower.startsWith("<system>")
+      ) {
+        log.warn("LLM input sanitization: removed suspicious line", { line });
+        return false;
+      }
+      return true;
+    })
+    .join("\n");
+  return sanitized;
+}
+
+/**
+ * Sanitizes and validates LLM response output.
+ * Removes lines containing dynamic code-execution primitives.
+ */
+function sanitizeLlmResponse(response: string | undefined | null): string {
+  if (response == null) return "";
+  // Remove null bytes
+  let sanitized = response.replace(/\0/g, "");
+  // Remove lines containing dangerous dynamic code execution primitives
+  const dangerousPatterns = [
+    /\beval\s*\(/i,
+    /\bexec\s*\(/i,
+    /\bsubprocess\s*\(\s*.*shell\s*=\s*True/i,
+    /\bos\.system\s*\(/i,
+    /\bos\.popen\s*\(/i,
+    /\b__import__\s*\(/i,
+    /\bFunction\s*\(\s*['"`]/i,
+    /\bnew\s+Function\s*\(/i,
+    /\bsetTimeout\s*\(\s*['"`]/i,
+    /\bsetInterval\s*\(\s*['"`]/i,
+    /\bchild_process/i,
+    /\bspawnSync\s*\(/i,
+    /\bexecSync\s*\(/i,
+    /\bexecFileSync\s*\(/i,
+    /\bshell\s*=\s*true/i,
+  ];
+  sanitized = sanitized
+    .split("\n")
+    .filter((line) => {
+      for (const pattern of dangerousPatterns) {
+        if (pattern.test(line)) {
+          log.warn("LLM response sanitization: removed dangerous line", {
+            pattern: pattern.toString(),
+            line,
+          });
+          return false;
+        }
+      }
+      return true;
+    })
+    .join("\n");
+  return sanitized;
+}
+
+/**
+ * Logs an LLM interaction (request and response) for audit purposes.
+ */
+function logLlmInteraction(params: {
+  sessionId: string | undefined;
+  sessionKey: string | undefined;
+  provider: string;
+  model: string;
+  inputSummary: Record<string, unknown>;
+  responseSummary?: Record<string, unknown>;
+  phase: "request" | "response" | "error";
+  error?: string;
+}): void {
+  log.info("LLM interaction", {
+    phase: params.phase,
+    sessionId: params.sessionId,
+    sessionKey: params.sessionKey,
+    provider: params.provider,
+    model: params.model,
+    ...(params.phase === "request" ? { input: params.inputSummary } : {}),
+    ...(params.phase === "response" ? { response: params.responseSummary } : {}),
+    ...(params.phase === "error" ? { error: params.error } : {}),
+    timestamp: new Date().toISOString(),
+  });
+}
+
 /**
  * Compacts a session with lane queueing (session lane + global lane).
  * Use this from outside a lane context. If already inside a lane, use
@@ -73,6 +210,25 @@ export async function compactEmbeddedPiSession(
         // owned /compact implementations see the same target as the runtime.
         const ceProvider = resolvedCompactionTarget.provider ?? DEFAULT_PROVIDER;
         const ceModelId = resolvedCompactionTarget.model ?? DEFAULT_MODEL;
+
+        // Enforce approved LLM policy
+        if (!isApprovedProvider(ceProvider)) {
+          log.warn(
+            `SECURITY POLICY: Provider "${ceProvider}" is not in the approved LLM provider list. ` +
+              `Please replace it with an approved provider from: ${APPROVED_LLM_PROVIDERS.join(", ")}. ` +
+              `Proceeding with unapproved provider — update your configuration immediately.`,
+            { unapprovedProvider: ceProvider, approvedProviders: APPROVED_LLM_PROVIDERS },
+          );
+        }
+        if (!isApprovedModel(ceModelId)) {
+          log.warn(
+            `SECURITY POLICY: Model "${ceModelId}" is not in the approved LLM model list. ` +
+              `Please replace it with an approved model from: ${APPROVED_LLM_MODELS.join(", ")}. ` +
+              `Proceeding with unapproved model — update your configuration immediately.`,
+            { unapprovedModel: ceModelId, approvedModels: APPROVED_LLM_MODELS },
+          );
+        }
+
         const { model: ceModel } = await resolveModelAsync(
           ceProvider,
           ceModelId,
@@ -115,6 +271,11 @@ export async function compactEmbeddedPiSession(
           workspaceDir: resolveUserPath(params.workspaceDir),
           messageProvider: resolvedMessageProvider,
         };
+
+        // Sanitize LLM inputs before use
+        const sanitizedCustomInstructions = sanitizeLlmInput(params.customInstructions);
+        const sanitizedExtraSystemPrompt = sanitizeLlmInput(params.extraSystemPrompt);
+
         const runtimeContext = {
           ...params,
           ...buildEmbeddedCompactionRuntimeContext({
@@ -137,7 +298,7 @@ export async function compactEmbeddedPiSession(
             thinkLevel: params.thinkLevel,
             reasoningLevel: params.reasoningLevel,
             bashElevated: params.bashElevated,
-            extraSystemPrompt: params.extraSystemPrompt,
+            extraSystemPrompt: sanitizedExtraSystemPrompt,
             ownerNumbers: params.ownerNumbers,
           }),
         };
@@ -159,17 +320,86 @@ export async function compactEmbeddedPiSession(
             });
           }
         }
-        const result = await contextEngine.compact({
+
+        // Log LLM interaction request
+        logLlmInteraction({
           sessionId: params.sessionId,
           sessionKey: params.sessionKey,
-          sessionFile: params.sessionFile,
-          tokenBudget: ceCtxInfo.tokens,
-          currentTokenCount: params.currentTokenCount,
-          compactionTarget: params.trigger === "manual" ? "threshold" : "budget",
-          customInstructions: params.customInstructions,
-          force: params.trigger === "manual",
-          runtimeContext,
+          provider: ceProvider,
+          model: ceModelId,
+          phase: "request",
+          inputSummary: {
+            sessionId: params.sessionId,
+            sessionKey: params.sessionKey,
+            tokenBudget: ceCtxInfo.tokens,
+            currentTokenCount: params.currentTokenCount,
+            compactionTarget: params.trigger === "manual" ? "threshold" : "budget",
+            hasCustomInstructions: sanitizedCustomInstructions.length > 0,
+            force: params.trigger === "manual",
+          },
         });
+
+        let result: Awaited<ReturnType<typeof contextEngine.compact>>;
+        try {
+          result = await contextEngine.compact({
+            sessionId: params.sessionId,
+            sessionKey: params.sessionKey,
+            sessionFile: params.sessionFile,
+            tokenBudget: ceCtxInfo.tokens,
+            currentTokenCount: params.currentTokenCount,
+            compactionTarget: params.trigger === "manual" ? "threshold" : "budget",
+            customInstructions: sanitizedCustomInstructions,
+            force: params.trigger === "manual",
+            runtimeContext,
+          });
+        } catch (err) {
+          // Log LLM interaction error
+          logLlmInteraction({
+            sessionId: params.sessionId,
+            sessionKey: params.sessionKey,
+            provider: ceProvider,
+            model: ceModelId,
+            phase: "error",
+            inputSummary: {},
+            error: formatErrorMessage(err),
+          });
+          throw err;
+        }
+
+        // Sanitize and validate LLM response
+        const rawSummary = result.result?.summary ?? "";
+        const sanitizedSummary = sanitizeLlmResponse(rawSummary);
+        if (result.result && rawSummary !== sanitizedSummary) {
+          log.warn("LLM response summary was sanitized: dangerous content removed", {
+            sessionId: params.sessionId,
+          });
+          result = {
+            ...result,
+            result: {
+              ...result.result,
+              summary: sanitizedSummary,
+            },
+          };
+        }
+
+        // Log LLM interaction response
+        logLlmInteraction({
+          sessionId: params.sessionId,
+          sessionKey: params.sessionKey,
+          provider: ceProvider,
+          model: ceModelId,
+          phase: "response",
+          inputSummary: {},
+          responseSummary: {
+            ok: result.ok,
+            compacted: result.compacted,
+            reason: result.reason,
+            tokensBefore: result.result?.tokensBefore,
+            tokensAfter: result.result?.tokensAfter,
+            hasSummary: (result.result?.summary?.length ?? 0) > 0,
+          },
+        });
+
         if (result.ok && result.compacted) {
           if (params.config && params.sessionKey && checkpointSnapshot) {
             try {

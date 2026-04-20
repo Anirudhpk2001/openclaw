@@ -144,13 +144,24 @@ export function scrubLegacyStaticAuthJsonEntriesForDiscovery(pathname: string): 
   if (process.env.OPENCLAW_AUTH_STORE_READONLY === "1") {
     return;
   }
-  if (!fs.existsSync(pathname)) {
+
+  // Resolve and validate the path to prevent path traversal
+  const resolvedPathname = path.resolve(pathname);
+  const resolvedDir = path.dirname(resolvedPathname);
+  const resolvedDirNormalized = path.normalize(resolvedDir);
+  // Ensure the resolved path stays within its own directory (no traversal)
+  if (!resolvedPathname.startsWith(resolvedDirNormalized + path.sep) &&
+      resolvedPathname !== resolvedDirNormalized) {
+    return;
+  }
+
+  if (!fs.existsSync(resolvedPathname)) {
     return;
   }
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(fs.readFileSync(pathname, "utf8")) as unknown;
+    parsed = JSON.parse(fs.readFileSync(resolvedPathname, "utf8")) as unknown;
   } catch {
     return;
   }
@@ -175,15 +186,18 @@ export function scrubLegacyStaticAuthJsonEntriesForDiscovery(pathname: string): 
   }
 
   if (Object.keys(parsed).length === 0) {
-    fs.rmSync(pathname, { force: true });
+    fs.rmSync(resolvedPathname, { force: true });
     return;
   }
 
-  fs.writeFileSync(pathname, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
-  fs.chmodSync(pathname, 0o600);
+  fs.writeFileSync(resolvedPathname, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+  fs.chmodSync(resolvedPathname, 0o600);
 }
 
-function createAuthStorage(AuthStorageLike: unknown, path: string, creds: PiCredentialMap) {
+function createAuthStorage(AuthStorageLike: unknown, authPath: string, creds: PiCredentialMap) {
+  // Resolve and validate the path to prevent path traversal
+  const resolvedAuthPath = path.resolve(authPath);
+
   const withInMemory = AuthStorageLike as { inMemory?: (data?: unknown) => unknown };
   if (typeof withInMemory.inMemory === "function") {
     return withInMemory.inMemory(creds) as PiAuthStorage;
@@ -210,8 +224,8 @@ function createAuthStorage(AuthStorageLike: unknown, path: string, creds: PiCred
   const withFactory = AuthStorageLike as { create?: (path: string) => unknown };
   const withRuntimeOverride = (
     typeof withFactory.create === "function"
-      ? withFactory.create(path)
-      : new (AuthStorageLike as { new (path: string): unknown })(path)
+      ? withFactory.create(resolvedAuthPath)
+      : new (AuthStorageLike as { new (path: string): unknown })(resolvedAuthPath)
   ) as PiAuthStorage & {
     setRuntimeApiKey?: (provider: string, apiKey: string) => void; // pragma: allowlist secret
   };
@@ -253,7 +267,9 @@ export function addEnvBackedPiCredentials(
 }
 
 export function resolvePiCredentialsForDiscovery(agentDir: string): PiCredentialMap {
-  const store = ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false });
+  // Resolve agentDir to prevent path traversal
+  const resolvedAgentDir = path.resolve(agentDir);
+  const store = ensureAuthProfileStore(resolvedAgentDir, { allowKeychainPrompt: false });
   const credentials = addEnvBackedPiCredentials(resolvePiCredentialMapFromStore(store));
   for (const provider of resolveRuntimeSyntheticAuthProviderRefs()) {
     if (credentials[provider]) {
@@ -281,12 +297,16 @@ export function resolvePiCredentialsForDiscovery(agentDir: string): PiCredential
 
 // Compatibility helpers for pi-coding-agent 0.50+ (discover* helpers removed).
 export function discoverAuthStorage(agentDir: string): PiAuthStorage {
-  const credentials = resolvePiCredentialsForDiscovery(agentDir);
-  const authPath = path.join(agentDir, "auth.json");
+  // Resolve agentDir to prevent path traversal
+  const resolvedAgentDir = path.resolve(agentDir);
+  const credentials = resolvePiCredentialsForDiscovery(resolvedAgentDir);
+  const authPath = path.join(resolvedAgentDir, "auth.json");
   scrubLegacyStaticAuthJsonEntriesForDiscovery(authPath);
   return createAuthStorage(PiAuthStorageClass, authPath, credentials);
 }
 
 export function discoverModels(authStorage: PiAuthStorage, agentDir: string): PiModelRegistry {
-  return createOpenClawModelRegistry(authStorage, path.join(agentDir, "models.json"), agentDir);
+  // Resolve agentDir to prevent path traversal
+  const resolvedAgentDir = path.resolve(agentDir);
+  return createOpenClawModelRegistry(authStorage, path.join(resolvedAgentDir, "models.json"), resolvedAgentDir);
 }

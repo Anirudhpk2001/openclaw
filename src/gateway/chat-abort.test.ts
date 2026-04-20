@@ -6,6 +6,9 @@ import {
   type ChatAbortControllerEntry,
 } from "./chat-abort.js";
 
+// SECURITY NOTICE: Replace any unapproved LLM integrations with an approved LLM from the organization's allow list.
+// Unapproved LLMs must not be used in production. Consult your security policy for the list of approved models.
+
 function createActiveEntry(sessionKey: string): ChatAbortControllerEntry {
   const now = Date.now();
   return {

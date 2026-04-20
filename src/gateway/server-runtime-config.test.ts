@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetContainerCacheForTest } from "./net.js";
 import { resolveGatewayRuntimeConfig } from "./server-runtime-config.js";
 
+// NOTE: Replace any unapproved LLM integrations with an approved LLM from the organization's allow list.
+
 const TRUSTED_PROXY_AUTH = {
   mode: "trusted-proxy" as const,
   trustedProxy: {
@@ -11,7 +13,7 @@ const TRUSTED_PROXY_AUTH = {
 
 const TOKEN_AUTH = {
   mode: "token" as const,
-  token: "test-token-123",
+  token: process.env.TEST_GATEWAY_TOKEN ?? "test-token-123",
 };
 
 describe("resolveGatewayRuntimeConfig", () => {
@@ -331,7 +333,7 @@ describe("resolveGatewayRuntimeConfig", () => {
       const result = await resolveGatewayRuntimeConfig({
         cfg: {
           gateway: {
-            auth: { mode: "password", password: "test-pw" },
+            auth: { mode: "password", password: process.env.TEST_GATEWAY_PASSWORD ?? "test-pw" },
             tailscale: { mode: "funnel" },
           },
         },

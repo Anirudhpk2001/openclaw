@@ -116,7 +116,7 @@ export const DEFAULT_PENDING_MAX_OUTPUT = clampWithDefault(
   200_000,
 );
 export const DEFAULT_PATH =
-  process.env.PATH ?? "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+  "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 export const DEFAULT_NOTIFY_TAIL_CHARS = 400;
 const DEFAULT_NOTIFY_SNIPPET_CHARS = 180;
 export const DEFAULT_APPROVAL_TIMEOUT_MS = DEFAULT_EXEC_APPROVAL_TIMEOUT_MS;
@@ -656,7 +656,7 @@ export async function runExecProcess(opts: {
             tty: opts.usePty,
           }),
         ],
-        env: backendExecSpec?.env ?? process.env,
+        env: backendExecSpec?.env ?? Object.assign(Object.create(null), process.env),
         stdinMode:
           backendExecSpec?.stdinMode ??
           (opts.usePty ? ("pipe-open" as const) : ("pipe-closed" as const)),
@@ -727,9 +727,9 @@ export async function runExecProcess(opts: {
           });
   } catch (err) {
     if (spawnSpec.mode === "pty") {
-      const warning = `Warning: PTY spawn failed (${String(err)}); retrying without PTY for \`${opts.command}\`.`;
+      const warning = `Warning: PTY spawn failed; retrying without PTY for \`${opts.command}\`.`;
       logWarn(
-        `exec: PTY spawn failed (${String(err)}); retrying without PTY for "${opts.command}".`,
+        `exec: PTY spawn failed; retrying without PTY for "${opts.command}".`,
       );
       opts.warnings.push(warning);
       usingPty = false;

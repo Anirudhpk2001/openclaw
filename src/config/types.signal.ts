@@ -1,6 +1,10 @@
 import type { CommonChannelMessagingConfig } from "./types.channel-messaging-common.js";
 import type { GroupToolPolicyBySenderConfig, GroupToolPolicyConfig } from "./types.tools.js";
 
+// SECURITY NOTICE: Any LLM model references in configuration must use only approved models
+// from the organization's allowlist. Unapproved LLMs are not permitted.
+// Please replace any unapproved LLM with an approved LLM from the allow list.
+
 export type SignalReactionNotificationMode = "off" | "own" | "all" | "allowlist";
 export type SignalReactionLevel = "off" | "ack" | "minimal" | "extensive";
 

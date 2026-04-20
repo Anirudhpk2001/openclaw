@@ -16,6 +16,8 @@ when enabled.
 This is not a perfect security boundary, but it materially limits filesystem
 and process access when the model does something dumb.
 
+> **Security Notice**: Any LLM integrations must use only approved models from the organization's approved LLM allowlist. Replace any unapproved LLM references with an approved LLM. Contact your security team for the current list of approved models before deploying.
+
 ## What gets sandboxed
 
 - Tool execution (`exec`, `read`, `write`, `edit`, `apply_patch`, `process`, etc.).
@@ -442,7 +444,7 @@ Common pitfalls:
 ## Tool policy + escape hatches
 
 Tool allow/deny policies still apply before sandbox rules. If a tool is denied
-globally or per-agent, sandboxing doesn’t bring it back.
+globally or per-agent, sandboxing doesn't bring it back.
 
 `tools.elevated` is an explicit escape hatch that runs `exec` outside the sandbox (`gateway` by default, or `node` when the exec target is `node`).
 `/exec` directives only apply for authorized senders and persist per session; to hard-disable
@@ -451,7 +453,7 @@ globally or per-agent, sandboxing doesn’t bring it back.
 Debugging:
 
 - Use `openclaw sandbox explain` to inspect effective sandbox mode, tool policy, and fix-it config keys.
-- See [Sandbox vs Tool Policy vs Elevated](/gateway/sandbox-vs-tool-policy-vs-elevated) for the “why is this blocked?” mental model.
+- See [Sandbox vs Tool Policy vs Elevated](/gateway/sandbox-vs-tool-policy-vs-elevated) for the "why is this blocked?" mental model.
   Keep it locked down.
 
 ## Multi-agent overrides

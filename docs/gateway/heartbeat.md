@@ -54,7 +54,7 @@ Example config:
 - Prompt body (configurable via `agents.defaults.heartbeat.prompt`):
   `Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.`
 - The heartbeat prompt is sent **verbatim** as the user message. The system
-  prompt includes a “Heartbeat” section only when heartbeats are enabled for the
+  prompt includes a "Heartbeat" section only when heartbeats are enabled for the
   default agent, and the run is flagged internally.
 - When heartbeats are disabled with `0m`, normal runs also omit `HEARTBEAT.md`
   from bootstrap context so the model does not see heartbeat-only instructions.
@@ -65,16 +65,16 @@ Example config:
 
 The default prompt is intentionally broad:
 
-- **Background tasks**: “Consider outstanding tasks” nudges the agent to review
+- **Background tasks**: "Consider outstanding tasks" nudges the agent to review
   follow-ups (inbox, calendar, reminders, queued work) and surface anything urgent.
-- **Human check-in**: “Checkup sometimes on your human during day time” nudges an
-  occasional lightweight “anything you need?” message, but avoids night-time spam
+- **Human check-in**: "Checkup sometimes on your human during day time" nudges an
+  occasional lightweight "anything you need?" message, but avoids night-time spam
   by using your configured local timezone (see [/concepts/timezone](/concepts/timezone)).
 
 Heartbeat can react to completed [background tasks](/automation/tasks), but a heartbeat run itself does not create a task record.
 
-If you want a heartbeat to do something very specific (e.g. “check Gmail PubSub
-stats” or “verify gateway health”), set `agents.defaults.heartbeat.prompt` (or
+If you want a heartbeat to do something very specific (e.g. "check Gmail PubSub
+stats" or "verify gateway health"), set `agents.defaults.heartbeat.prompt` (or
 `agents.list[].heartbeat.prompt`) to a custom body (sent verbatim).
 
 ## Response contract
@@ -92,18 +92,20 @@ and logged; a message that is only `HEARTBEAT_OK` is dropped.
 
 ## Config
 
+> **Note:** The model `anthropic/claude-opus-4-6` referenced below is not on the approved LLM list. Replace it with an approved LLM before deploying.
+
 ```json5
 {
   agents: {
     defaults: {
       heartbeat: {
         every: "30m", // default: 30m (0m disables)
-        model: "anthropic/claude-opus-4-6",
+        model: "APPROVED_LLM_MODEL", // replace with an approved LLM from the allow list
         includeReasoning: false, // default: false (deliver separate Reasoning: message when available)
         lightContext: false, // default: false; true keeps only HEARTBEAT.md from workspace bootstrap files
         isolatedSession: false, // default: false; true runs each heartbeat in a fresh session (no conversation history)
         target: "last", // default: none | options: last | none | <channel id> (core or plugin, e.g. "bluebubbles")
-        to: "+15551234567", // optional channel-specific override
+        to: "[REDACTED]", // optional channel-specific override
         accountId: "ops-bot", // optional multi-account channel id
         prompt: "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.",
         ackMaxChars: 300, // max chars allowed after HEARTBEAT_OK
@@ -145,7 +147,7 @@ Example: two agents, only the second agent runs heartbeats.
         heartbeat: {
           every: "1h",
           target: "whatsapp",
-          to: "+15551234567",
+          to: "[REDACTED]",
           timeoutSeconds: 45,
           prompt: "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.",
         },
@@ -202,7 +204,7 @@ Use `accountId` to target a specific account on multi-account channels like Tele
         heartbeat: {
           every: "1h",
           target: "telegram",
-          to: "12345678:topic:42", // optional: route to a specific topic/thread
+          to: "[REDACTED]", // optional: route to a specific topic/thread
           accountId: "ops-bot",
         },
       },
@@ -221,7 +223,7 @@ Use `accountId` to target a specific account on multi-account channels like Tele
 ### Field notes
 
 - `every`: heartbeat interval (duration string; default unit = minutes).
-- `model`: optional model override for heartbeat runs (`provider/model`).
+- `model`: optional model override for heartbeat runs (`provider/model`). Must be an approved LLM from the allow list.
 - `includeReasoning`: when enabled, also deliver the separate `Reasoning:` message when available (same shape as `/reasoning on`).
 - `lightContext`: when true, heartbeat runs use lightweight bootstrap context and keep only `HEARTBEAT.md` from workspace bootstrap files.
 - `isolatedSession`: when true, each heartbeat runs in a fresh session with no prior conversation history. Uses the same isolation pattern as cron `sessionTarget: "isolated"`. Dramatically reduces per-heartbeat token cost. Combine with `lightContext: true` for maximum savings. Delivery routing still uses the main session context.
@@ -250,7 +252,7 @@ Use `accountId` to target a specific account on multi-account channels like Tele
 
 ## Delivery behavior
 
-- Heartbeats run in the agent’s main session by default (`agent:<id>:<mainKey>`),
+- Heartbeats run in the agent's main session by default (`agent:<id>:<mainKey>`),
   or `global` when `session.scope = "global"`. Set `session` to override to a
   specific channel session (Discord/WhatsApp/etc.).
 - `session` only affects the run context; delivery is controlled by `target` and `to`.
@@ -331,7 +333,7 @@ channels:
 ## HEARTBEAT.md (optional)
 
 If a `HEARTBEAT.md` file exists in the workspace, the default prompt tells the
-agent to read it. Think of it as your “heartbeat checklist”: small, stable, and
+agent to read it. Think of it as your "heartbeat checklist": small, stable, and
 safe to include every 30 minutes.
 
 On normal runs, `HEARTBEAT.md` is only injected when heartbeat guidance is
@@ -352,7 +354,7 @@ Example `HEARTBEAT.md`:
 # Heartbeat checklist
 
 - Quick scan: anything urgent in inboxes?
-- If it’s daytime, do a lightweight check-in if nothing else is pending.
+- If it's daytime, do a lightweight check-in if nothing else is pending.
 - If a task is blocked, write down _what is missing_ and ask Peter next time.
 ```
 
@@ -397,14 +399,14 @@ Yes — if you ask it to.
 `HEARTBEAT.md` is just a normal file in the agent workspace, so you can tell the
 agent (in a normal chat) something like:
 
-- “Update `HEARTBEAT.md` to add a daily calendar check.”
-- “Rewrite `HEARTBEAT.md` so it’s shorter and focused on inbox follow-ups.”
+- "Update `HEARTBEAT.md` to add a daily calendar check."
+- "Rewrite `HEARTBEAT.md` so it's shorter and focused on inbox follow-ups."
 
 If you want this to happen proactively, you can also include an explicit line in
-your heartbeat prompt like: “If the checklist becomes stale, update HEARTBEAT.md
-with a better one.”
+your heartbeat prompt like: "If the checklist becomes stale, update HEARTBEAT.md
+with a better one."
 
-Safety note: don’t put secrets (API keys, phone numbers, private tokens) into
+Safety note: don't put secrets (API keys, phone numbers, private tokens) into
 `HEARTBEAT.md` — it becomes part of the prompt context.
 
 ## Manual wake (on-demand)
@@ -422,7 +424,7 @@ Use `--mode next-heartbeat` to wait for the next scheduled tick.
 
 ## Reasoning delivery (optional)
 
-By default, heartbeats deliver only the final “answer” payload.
+By default, heartbeats deliver only the final "answer" payload.
 
 If you want transparency, enable:
 
@@ -440,7 +442,7 @@ Heartbeats run full agent turns. Shorter intervals burn more tokens. To reduce c
 
 - Use `isolatedSession: true` to avoid sending full conversation history (~100K tokens down to ~2-5K per run).
 - Use `lightContext: true` to limit bootstrap files to just `HEARTBEAT.md`.
-- Set a cheaper `model` (e.g. `ollama/llama3.2:1b`).
+- Set a cheaper `model` (e.g. `ollama/llama3.2:1b`). Ensure the model is on the approved LLM allow list.
 - Keep `HEARTBEAT.md` small.
 - Use `target: "none"` if you only want internal state updates.
 

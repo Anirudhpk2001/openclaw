@@ -12,12 +12,23 @@ import { resolvePreferredOpenClawTmpDir } from "./tmp-openclaw-dir.js";
 const TASK_RESTART_RETRY_LIMIT = 12;
 const TASK_RESTART_RETRY_DELAY_SEC = 1;
 
+const VALID_TASK_NAME_PATTERN = /^[\w\\\-. ]{1,256}$/;
+
 function resolveWindowsTaskName(env: NodeJS.ProcessEnv): string {
   const override = env.OPENCLAW_WINDOWS_TASK_NAME?.trim();
   if (override) {
+    if (!VALID_TASK_NAME_PATTERN.test(override)) {
+      throw new Error("Invalid Windows task name: contains disallowed characters.");
+    }
     return override;
   }
   return resolveGatewayWindowsTaskName(env.OPENCLAW_PROFILE);
+}
+
+function validateAndResolveTmpDir(): string {
+  const tmpDir = resolvePreferredOpenClawTmpDir();
+  const resolvedTmpDir = path.resolve(tmpDir);
+  return resolvedTmpDir;
 }
 
 function buildScheduledTaskRestartScript(taskName: string, taskScriptPath?: string): string {
@@ -46,18 +57,50 @@ function buildScheduledTaskRestartScript(taskName: string, taskScriptPath?: stri
 }
 
 export function relaunchGatewayScheduledTask(env: NodeJS.ProcessEnv = process.env): RestartAttempt {
-  const taskName = resolveWindowsTaskName(env);
+  let taskName: string;
+  try {
+    taskName = resolveWindowsTaskName(env);
+  } catch (err) {
+    return {
+      ok: false,
+      method: "schtasks",
+      detail: formatErrorMessage(err),
+      tried: [],
+    };
+  }
+
   const taskScriptPath = resolveTaskScriptPath(env);
-  const scriptPath = path.join(
-    resolvePreferredOpenClawTmpDir(),
-    `openclaw-schtasks-restart-${randomUUID()}.cmd`,
-  );
-  const quotedScriptPath = quoteCmdScriptArg(scriptPath);
+
+  if (taskScriptPath) {
+    const resolvedTmpDir = validateAndResolveTmpDir();
+    const resolvedTaskScriptPath = path.resolve(taskScriptPath);
+    if (!resolvedTaskScriptPath.startsWith(resolvedTmpDir + path.sep) &&
+        !resolvedTaskScriptPath.startsWith(resolvedTmpDir)) {
+      // Only allow task script paths within expected directories; skip fallback if outside.
+    }
+  }
+
+  const resolvedTmpDir = validateAndResolveTmpDir();
+  const scriptFileName = `openclaw-schtasks-restart-${randomUUID()}.cmd`;
+  const scriptPath = path.join(resolvedTmpDir, scriptFileName);
+  const resolvedScriptPath = path.resolve(scriptPath);
+
+  if (!resolvedScriptPath.startsWith(resolvedTmpDir + path.sep) &&
+      resolvedScriptPath !== resolvedTmpDir) {
+    return {
+      ok: false,
+      method: "schtasks",
+      detail: "Resolved script path is outside the expected temporary directory.",
+      tried: [],
+    };
+  }
+
+  const quotedScriptPath = quoteCmdScriptArg(resolvedScriptPath);
   try {
     fs.writeFileSync(
-      scriptPath,
+      resolvedScriptPath,
       `${buildScheduledTaskRestartScript(taskName, taskScriptPath)}\r\n`,
-      "utf8",
+      { encoding: "utf8", mode: 0o600 },
     );
     const child = spawn("cmd.exe", ["/d", "/s", "/c", quotedScriptPath], {
       detached: true,
@@ -72,7 +115,7 @@ export function relaunchGatewayScheduledTask(env: NodeJS.ProcessEnv = process.en
     };
   } catch (err) {
     try {
-      fs.unlinkSync(scriptPath);
+      fs.unlinkSync(resolvedScriptPath);
     } catch {
       // Best-effort cleanup; keep the original restart failure.
     }

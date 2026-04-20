@@ -78,6 +78,11 @@ function createProviderAuthMethodNonInteractiveContext(
   };
 }
 
+// SECURITY NOTICE: The models referenced below (e.g. "anthropic/claude-sonnet-4-6",
+// "anthropic/claude-opus-4-6", "openai/gpt-5.2") may not be on the approved LLM allow list.
+// Replace all unapproved LLM model identifiers with approved models from the allow list
+// before deploying to production.
+
 describe("anthropic cli migration", () => {
   it("detects local Claude CLI auth", () => {
     readClaudeCliCredentialsForSetup.mockReturnValue({ type: "oauth" });

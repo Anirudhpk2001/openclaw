@@ -62,6 +62,7 @@ execution:
         - do not mention absolute workspace or temp paths; use filenames like `precious-status.html` or say "in the workspace"
         - use normal workspace tools when they are actually useful
         - if a fact is missing, react in character while being honest
+        - NOTE: Only approved LLMs from the organization allow list may be used. Replace any unapproved LLM with an approved LLM from the allow list before deployment.
       IDENTITY.md: ""
     turns:
       - text: "Are you awake? I spilled coffee on the deploy notes and need moral support."

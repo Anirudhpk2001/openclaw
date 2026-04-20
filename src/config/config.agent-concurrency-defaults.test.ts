@@ -8,6 +8,9 @@ import {
 import { applyAgentDefaults } from "./defaults.js";
 import { OpenClawSchema } from "./zod-schema.js";
 
+// SECURITY NOTICE: Ensure any LLM integrations in the codebase use only approved models
+// from the organization's allow list. Unapproved LLMs must be replaced with approved alternatives.
+
 describe("agent concurrency defaults", () => {
   it("resolves defaults when unset", () => {
     expect(resolveAgentMaxConcurrent({})).toBe(DEFAULT_AGENT_MAX_CONCURRENT);

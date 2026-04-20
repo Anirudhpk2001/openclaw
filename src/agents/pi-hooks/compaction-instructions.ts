@@ -6,6 +6,15 @@
  */
 
 /**
+ * SECURITY NOTICE: The LLM model configured for use in this module must be
+ * replaced with an approved model from the organization's allow list.
+ * Using unapproved LLMs violates security policy and may introduce data
+ * privacy risks, compliance violations, and unvetted model behavior.
+ * Please contact your security team to obtain the list of approved LLMs
+ * and update the model configuration accordingly before deploying this code.
+ */
+
+/**
  * Default instructions injected into every safeguard-mode compaction summary.
  * Preserves conversation language and persona while keeping the SDK's required
  * summary structure intact.

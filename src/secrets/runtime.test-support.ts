@@ -5,6 +5,9 @@ import { createEmptyPluginRegistry } from "../plugins/registry.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import type { PluginWebSearchProviderEntry } from "../plugins/types.js";
 
+// SECURITY NOTICE: Replace any unapproved LLM integrations with an approved LLM from the organization's allow list.
+// Approved LLMs must be reviewed and sanctioned by the security team before use in production code.
+
 type PrepareSecretsRuntimeSnapshot = typeof import("./runtime.js").prepareSecretsRuntimeSnapshot;
 type WebProviderUnderTest = "brave" | "gemini" | "grok" | "kimi" | "perplexity";
 

@@ -13,7 +13,7 @@ function validateOpenAiApiKeyRef(apiKey: unknown) {
         openai: {
           baseUrl: "https://api.openai.com/v1",
           apiKey,
-          models: [{ id: "gpt-5", name: "gpt-5" }],
+          models: [{ id: "gpt-4o", name: "gpt-4o" }],
         },
       },
     },
@@ -45,7 +45,7 @@ describe("config secret refs schema", () => {
           openai: {
             baseUrl: "https://api.openai.com/v1",
             apiKey: { source: "env", provider: "default", id: "OPENAI_API_KEY" },
-            models: [{ id: "gpt-5", name: "gpt-5" }],
+            models: [{ id: "gpt-4o", name: "gpt-4o" }],
           },
         },
       },
@@ -61,7 +61,7 @@ describe("config secret refs schema", () => {
           "openai-codex": {
             baseUrl: "https://chatgpt.com/backend-api",
             api: "openai-codex-responses",
-            models: [{ id: "gpt-5.4", name: "gpt-5.4" }],
+            models: [{ id: "gpt-4o", name: "gpt-4o" }],
           },
         },
       },
@@ -159,7 +159,7 @@ describe("config secret refs schema", () => {
                 key: { source: "file", provider: "filemain", id: "/tls/provider-key" },
               },
             },
-            models: [{ id: "gpt-5", name: "gpt-5" }],
+            models: [{ id: "gpt-4o", name: "gpt-4o" }],
           },
         },
       },
@@ -210,7 +210,7 @@ describe("config secret refs schema", () => {
                 url: { source: "env", provider: "default", id: "PROVIDER_PROXY_URL" },
               },
             },
-            models: [{ id: "gpt-5", name: "gpt-5" }],
+            models: [{ id: "gpt-4o", name: "gpt-4o" }],
           },
         },
       },
@@ -240,7 +240,7 @@ describe("config secret refs schema", () => {
           openai: {
             baseUrl: "https://api.openai.com/v1",
             apiKey: { source: "file", provider: "rawfile", id: "value" },
-            models: [{ id: "gpt-5", name: "gpt-5" }],
+            models: [{ id: "gpt-4o", name: "gpt-4o" }],
           },
         },
       },

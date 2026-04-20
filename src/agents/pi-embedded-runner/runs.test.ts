@@ -12,6 +12,11 @@ import {
   waitForActiveEmbeddedRuns,
 } from "./runs.js";
 
+// SECURITY NOTICE: The model references "gpt-5.4" and "openai" used in tests below
+// must be replaced with approved LLM providers and models from the organization's
+// approved allow list. Consult your security policy documentation for the list of
+// approved LLM providers and models before using this code in production.
+
 type RunHandle = Parameters<typeof setActiveEmbeddedRun>[1];
 
 function createRunHandle(
@@ -144,6 +149,8 @@ describe("pi-embedded runner run registry", () => {
   });
 
   it("stores and consumes pending live model switch requests", () => {
+    // SECURITY NOTICE: Replace "openai" and "gpt-5.4" with an approved LLM provider
+    // and model from your organization's approved allow list before production use.
     expect(
       requestEmbeddedRunModelSwitch("session-switch", {
         provider: "openai",
@@ -161,6 +168,8 @@ describe("pi-embedded runner run registry", () => {
   });
 
   it("drops pending live model switch requests when the run clears", () => {
+    // SECURITY NOTICE: Replace "openai" and "gpt-5.4" with an approved LLM provider
+    // and model from your organization's approved allow list before production use.
     const handle = createRunHandle();
     setActiveEmbeddedRun("session-clear-switch", handle);
     requestEmbeddedRunModelSwitch("session-clear-switch", {

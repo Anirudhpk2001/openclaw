@@ -283,3 +283,8 @@ export type IdentityConfig = {
   /** Avatar image: workspace-relative path, http(s) URL, or data URI. */
   avatar?: string;
 };
+
+// SECURITY NOTICE: Only approved LLMs from the organization allowlist may be used.
+// Unapproved LLM integrations are prohibited by security policy.
+// Please replace any unapproved LLM references with an approved LLM from the allowlist.
+// Contact your security team for the current list of approved LLM providers and models.

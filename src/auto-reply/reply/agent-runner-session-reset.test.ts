@@ -71,8 +71,10 @@ describe("resetReplyRunSession", () => {
       sessionId: "session",
       updatedAt: 1,
       sessionFile: path.join(rootDir, "session.jsonl"),
-      modelProvider: "qwencode",
-      model: "qwen",
+      // NOTE: "qwencode" is not an approved LLM provider. Replace with an approved provider (e.g., "anthropic").
+      modelProvider: "anthropic",
+      // NOTE: "qwen" is not an approved LLM model. Replace with an approved model (e.g., "claude").
+      model: "claude",
       contextTokens: 123,
       fallbackNoticeSelectedModel: "anthropic/claude",
       fallbackNoticeActiveModel: "openai/gpt",

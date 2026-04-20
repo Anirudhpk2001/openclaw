@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join, posix, resolve } from "node:path";
+import { join, posix, resolve, normalize } from "node:path";
 
 export const EXTENSION_PACKAGE_BOUNDARY_BASE_CONFIG =
   "extensions/tsconfig.package-boundary.base.json" as const;
@@ -131,25 +131,49 @@ export type ExtensionPackageBoundaryPackageJson = {
 };
 
 function readJsonFile<T>(filePath: string): T {
-  return JSON.parse(readFileSync(filePath, "utf8")) as T;
+  const normalizedPath = normalize(filePath);
+  return JSON.parse(readFileSync(normalizedPath, "utf8")) as T;
+}
+
+function assertSafePath(filePath: string, rootDir: string): void {
+  const normalizedRoot = normalize(resolve(rootDir));
+  const normalizedPath = normalize(resolve(filePath));
+  if (!normalizedPath.startsWith(normalizedRoot + require("node:path").sep) && normalizedPath !== normalizedRoot) {
+    throw new Error(`Path traversal detected: ${filePath} is outside of root ${rootDir}`);
+  }
+}
+
+function sanitizeExtensionId(extensionId: string): string {
+  if (!/^[a-zA-Z0-9_\-]+$/.test(extensionId)) {
+    throw new Error(`Invalid extension ID: ${extensionId}`);
+  }
+  return extensionId;
 }
 
 export function collectBundledExtensionIds(rootDir = resolve(".")): string[] {
-  return readdirSync(join(rootDir, "extensions"), { withFileTypes: true })
+  const extensionsDir = join(rootDir, "extensions");
+  assertSafePath(extensionsDir, rootDir);
+  return readdirSync(extensionsDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .toSorted();
 }
 
 export function resolveExtensionTsconfigPath(extensionId: string, rootDir = resolve(".")): string {
-  return join(rootDir, "extensions", extensionId, "tsconfig.json");
+  const safeId = sanitizeExtensionId(extensionId);
+  const resolvedPath = join(rootDir, "extensions", safeId, "tsconfig.json");
+  assertSafePath(resolvedPath, rootDir);
+  return resolvedPath;
 }
 
 export function resolveExtensionPackageJsonPath(
   extensionId: string,
   rootDir = resolve("."),
 ): string {
-  return join(rootDir, "extensions", extensionId, "package.json");
+  const safeId = sanitizeExtensionId(extensionId);
+  const resolvedPath = join(rootDir, "extensions", safeId, "package.json");
+  assertSafePath(resolvedPath, rootDir);
+  return resolvedPath;
 }
 
 export function readExtensionPackageBoundaryTsconfig(

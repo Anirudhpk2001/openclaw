@@ -49,6 +49,56 @@ function parseTimestampMs(value: string | undefined): number {
   return Number.isFinite(parsed) ? parsed : Date.now();
 }
 
+/**
+ * Sanitizes a string intended for LLM input by removing or neutralizing
+ * potentially dangerous content such as prompt injection attempts,
+ * control characters, and excessively long inputs.
+ */
+function sanitizeLlmInput(input: string): string {
+  if (typeof input !== "string") return "";
+  // Remove null bytes and other control characters (except newline/tab)
+  let sanitized = input.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+  // Truncate to a safe maximum length to prevent prompt flooding
+  const MAX_INPUT_LENGTH = 32000;
+  if (sanitized.length > MAX_INPUT_LENGTH) {
+    sanitized = sanitized.slice(0, MAX_INPUT_LENGTH);
+  }
+  // Neutralize common prompt injection patterns
+  sanitized = sanitized.replace(/^\s*system\s*:/gim, "[system]:");
+  sanitized = sanitized.replace(/^\s*assistant\s*:/gim, "[assistant]:");
+  sanitized = sanitized.replace(/^\s*user\s*:/gim, "[user]:");
+  sanitized = sanitized.replace(/ignore\s+(all\s+)?(previous|prior|above)\s+instructions?/gi, "[filtered]");
+  return sanitized;
+}
+
+/**
+ * Sanitizes and validates an LLM response by removing lines that contain
+ * dynamic code-execution primitives such as eval, exec, subprocess(shell=True), etc.
+ */
+function sanitizeLlmResponse(response: string): string {
+  if (typeof response !== "string") return "";
+  const dangerousPatterns = [
+    /\beval\s*\(/gi,
+    /\bexec\s*\(/gi,
+    /\bsubprocess\s*\(.*shell\s*=\s*True/gi,
+    /\bos\.system\s*\(/gi,
+    /\bspawn\s*\(/gi,
+    /\bnew\s+Function\s*\(/gi,
+    /\bsetTimeout\s*\(\s*["'`]/gi,
+    /\bsetInterval\s*\(\s*["'`]/gi,
+  ];
+  const lines = response.split("\n");
+  const filtered = lines.filter((line) => {
+    for (const pattern of dangerousPatterns) {
+      if (pattern.test(line)) {
+        return false;
+      }
+    }
+    return true;
+  });
+  return filtered.join("\n");
+}
+
 export async function handleFeishuCommentEvent(
   params: HandleFeishuCommentEventParams,
 ): Promise<void> {
@@ -176,12 +226,27 @@ export async function handleFeishuCommentEvent(
     fileType: turn.fileType,
     fileToken: turn.fileToken,
   });
-  const bodyForAgent = `[message_id: ${turn.messageId}]\n${turn.prompt}`;
+
+  // Sanitize all user-supplied content before sending to the LLM
+  const sanitizedPrompt = sanitizeLlmInput(turn.prompt);
+  const sanitizedTargetReplyText = turn.targetReplyText ? sanitizeLlmInput(turn.targetReplyText) : turn.targetReplyText;
+  const sanitizedRootCommentText = turn.rootCommentText ? sanitizeLlmInput(turn.rootCommentText) : turn.rootCommentText;
+
+  const bodyForAgent = `[message_id: ${turn.messageId}]\n${sanitizedPrompt}`;
+  const rawBody = sanitizedTargetReplyText ?? sanitizedRootCommentText ?? sanitizedPrompt;
+
+  // Log the LLM interaction before dispatch
+  log(
+    `feishu[${account.accountId}]: LLM interaction initiated ` +
+      `(session=${commentSessionKey} sender=${turn.senderId} comment=${turn.commentId} ` +
+      `timestamp=${new Date().toISOString()} bodyLength=${bodyForAgent.length})`,
+  );
+
   const ctxPayload = core.channel.reply.finalizeInboundContext({
     Body: bodyForAgent,
     BodyForAgent: bodyForAgent,
-    RawBody: turn.targetReplyText ?? turn.rootCommentText ?? turn.prompt,
-    CommandBody: turn.targetReplyText ?? turn.rootCommentText ?? turn.prompt,
+    RawBody: rawBody,
+    CommandBody: rawBody,
     From: `feishu:${turn.senderId}`,
     To: commentTarget,
     SessionKey: commentSessionKey,
@@ -239,13 +304,28 @@ export async function handleFeishuCommentEvent(
     );
     const { queuedFinal, counts } = await core.channel.reply.withReplyDispatcher({
       dispatcher,
-      run: () =>
-        core.channel.reply.dispatchReplyFromConfig({
+      run: async () => {
+        const result = await core.channel.reply.dispatchReplyFromConfig({
           ctx: ctxPayload,
           cfg: effectiveCfg,
-          dispatcher,
+          dispatcher: {
+            ...dispatcher,
+            send: async (response: string, options?: unknown) => {
+              // Sanitize and validate LLM response before delivering
+              const sanitizedResponse = sanitizeLlmResponse(response);
+              // Log the LLM response
+              log(
+                `feishu[${account.accountId}]: LLM response received ` +
+                  `(session=${commentSessionKey} responseLength=${sanitizedResponse.length} ` +
+                  `timestamp=${new Date().toISOString()})`,
+              );
+              return dispatcher.send(sanitizedResponse, options);
+            },
+          },
           replyOptions,
-        }),
+        });
+        return result;
+      },
     });
     log(
       `feishu[${account.accountId}]: drive comment dispatch complete ` +

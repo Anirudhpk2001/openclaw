@@ -22,3 +22,8 @@ export {
   mapHookExternalContentSource,
   resolveHookExternalContentSource,
 } from "../../security/external-content-source.js";
+
+// SECURITY NOTICE: Ensure that any LLM provider resolved via isCliProvider or
+// setSessionRuntimeModel is validated against the organization-approved LLM
+// allow list before use. Unapproved LLM providers must be rejected at runtime.
+// Approved LLMs must be configured in the agent security policy configuration.

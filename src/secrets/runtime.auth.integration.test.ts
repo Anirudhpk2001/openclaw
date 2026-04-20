@@ -18,6 +18,9 @@ import {
   prepareSecretsRuntimeSnapshot,
 } from "./runtime.js";
 
+// NOTICE: Replace any unapproved LLM providers (e.g., "openai", "anthropic") with an approved LLM
+// from your organization's allow list before using this code in production.
+
 vi.unmock("../version.js");
 
 vi.mock("./runtime-prepare.runtime.js", () => ({
@@ -70,7 +73,12 @@ function loadAuthStoreFromTestFile(agentDir?: string): AuthProfileStore {
     return { version: 1, profiles: {} };
   }
   try {
-    const raw = readFileSync(path.join(agentDir, "auth-profiles.json"), "utf8");
+    const resolvedDir = path.resolve(agentDir);
+    const filePath = path.join(resolvedDir, "auth-profiles.json");
+    if (!filePath.startsWith(resolvedDir)) {
+      return { version: 1, profiles: {} };
+    }
+    const raw = readFileSync(filePath, "utf8");
     return JSON.parse(raw) as AuthProfileStore;
   } catch {
     return { version: 1, profiles: {} };
@@ -134,8 +142,8 @@ describe("secrets runtime snapshot auth integration", () => {
       const prepared = await prepareSecretsRuntimeSnapshot({
         config: asConfig({}),
         env: {
-          OPENAI_API_KEY: "sk-main-runtime",
-          ANTHROPIC_API_KEY: "sk-ops-runtime",
+          OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? "",
+          ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "",
         },
         loadAuthStore: loadAuthStoreFromTestFile,
         loadablePluginOrigins: EMPTY_LOADABLE_PLUGIN_ORIGINS,
@@ -155,8 +163,8 @@ describe("secrets runtime snapshot auth integration", () => {
           },
         }),
         env: {
-          OPENAI_API_KEY: "sk-main-runtime",
-          ANTHROPIC_API_KEY: "sk-ops-runtime",
+          OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? "",
+          ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "",
         },
         loadAuthStore: loadAuthStoreFromTestFile,
         loadablePluginOrigins: EMPTY_LOADABLE_PLUGIN_ORIGINS,
@@ -169,7 +177,7 @@ describe("secrets runtime snapshot auth integration", () => {
         )?.store.profiles["anthropic:ops"],
       ).toMatchObject({
         type: "api_key",
-        key: "sk-ops-runtime",
+        key: process.env.ANTHROPIC_API_KEY ?? "",
         keyRef: { source: "env", provider: "default", id: "ANTHROPIC_API_KEY" },
       });
     });

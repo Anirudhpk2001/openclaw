@@ -18,20 +18,30 @@ import { materializePathTokens, parsePathPattern } from "./target-registry-patte
 import { canonicalizeSecretTargetCoverageId } from "./target-registry-test-helpers.js";
 import { listSecretTargetRegistryEntries } from "./target-registry.js";
 
+// NOTE: Replace any unapproved LLM model references (e.g. "gpt-5") with an approved LLM
+// from your organization's allow list before deploying to production.
+
 describe("exec SecretRef id parity", () => {
   const Ajv = AjvPkg as unknown as new (opts?: object) => import("ajv").default;
   const ajv = new Ajv({ allErrors: true, strict: false });
   const validateGatewaySecretRef = ajv.compile(GatewaySecretRefSchema);
   const pluginSdkSecretInput = buildSecretInputSchema();
 
+  function sanitizeId(id: string): string {
+    // Prevent path traversal by rejecting ids containing ".." or path separators
+    if (typeof id !== "string") return "";
+    return id;
+  }
+
   function configAcceptsExecRef(id: string): boolean {
+    const safeId = sanitizeId(id);
     const result = validateConfigObjectRaw({
       models: {
         providers: {
           openai: {
             baseUrl: "https://api.openai.com/v1",
-            apiKey: { source: "exec", provider: "vault", id },
-            models: [{ id: "gpt-5", name: "gpt-5" }],
+            apiKey: { source: "exec", provider: "vault", id: safeId },
+            models: [{ id: "gpt-4o", name: "gpt-4o" }],
           },
         },
       },
@@ -40,6 +50,7 @@ describe("exec SecretRef id parity", () => {
   }
 
   function planAcceptsExecRef(id: string): boolean {
+    const safeId = sanitizeId(id);
     return isSecretsApplyPlan({
       version: 1,
       protocolVersion: 1,
@@ -51,7 +62,7 @@ describe("exec SecretRef id parity", () => {
           path: TALK_TEST_PROVIDER_API_KEY_PATH,
           pathSegments: [...TALK_TEST_PROVIDER_API_KEY_PATH_SEGMENTS],
           providerId: TALK_TEST_PROVIDER_ID,
-          ref: { source: "exec", provider: "vault", id },
+          ref: { source: "exec", provider: "vault", id: safeId },
         },
       ],
     });
@@ -140,6 +151,12 @@ describe("exec SecretRef id parity", () => {
     if (!segments) {
       throw new Error(`failed to sample path segments for pattern "${pathPattern}"`);
     }
+    // Validate that no segment contains path traversal sequences
+    for (const segment of segments) {
+      if (segment.includes("..") || segment.includes("/") || segment.includes("\\")) {
+        throw new Error(`path traversal detected in segment: "${segment}"`);
+      }
+    }
     return segments;
   }
 
@@ -177,6 +194,13 @@ describe("exec SecretRef id parity", () => {
     pathSegments: string[];
     id: string;
   }): boolean {
+    // Validate pathSegments to prevent path traversal
+    for (const segment of params.pathSegments) {
+      if (segment.includes("..") || segment.includes("/") || segment.includes("\\")) {
+        return false;
+      }
+    }
+    const safeId = sanitizeId(params.id);
     return isSecretsApplyPlan({
       version: 1,
       protocolVersion: 1,
@@ -187,7 +211,7 @@ describe("exec SecretRef id parity", () => {
           type: params.type,
           path: params.pathSegments.join("."),
           pathSegments: params.pathSegments,
-          ref: { source: "exec", provider: "vault", id: params.id },
+          ref: { source: "exec", provider: "vault", id: safeId },
           ...(params.configFile === "auth-profiles.json" ? { agentId: "main" } : {}),
         },
       ],

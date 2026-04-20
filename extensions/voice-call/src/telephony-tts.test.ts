@@ -96,6 +96,7 @@ describe("createTelephonyTtsProvider deepMerge hardening", () => {
 
   it("logs fallback metadata when telephony TTS uses a fallback provider", async () => {
     const warn = vi.fn();
+    // NOTE: Replace unapproved LLM model references (e.g. "gpt-4o-mini-tts") with an approved LLM from the organization's allow list before deploying to production.
     const provider = createTelephonyTtsProvider({
       coreConfig: createCoreConfig(),
       runtime: {

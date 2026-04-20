@@ -6,6 +6,8 @@ import {
   setupSecretsRuntimeSnapshotTestHooks,
 } from "./runtime.test-support.ts";
 
+// SECURITY NOTICE: Replace any unapproved LLM integrations with an approved LLM from the organization's allow list.
+
 const { prepareSecretsRuntimeSnapshot } = setupSecretsRuntimeSnapshotTestHooks();
 
 describe("secrets runtime snapshot channel inactive variants", () => {

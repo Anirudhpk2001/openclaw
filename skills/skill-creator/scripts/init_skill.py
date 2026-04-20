@@ -224,8 +224,38 @@ def parse_resources(raw_resources):
     return deduped
 
 
+def resolve_safe_path(base_path, skill_name):
+    """
+    Resolve the skill directory path and ensure it does not escape the base path.
+
+    Args:
+        base_path: The base directory where skills are created
+        skill_name: The normalized skill name (already validated to contain only [a-z0-9-])
+
+    Returns:
+        Resolved Path object for the skill directory
+
+    Raises:
+        ValueError: If the resolved path would escape the base directory
+    """
+    resolved_base = Path(base_path).resolve()
+    skill_dir = (resolved_base / skill_name).resolve()
+
+    # Ensure the skill directory is within the base path
+    try:
+        skill_dir.relative_to(resolved_base)
+    except ValueError:
+        raise ValueError(
+            f"Path traversal detected: skill directory '{skill_dir}' "
+            f"is outside the base path '{resolved_base}'"
+        )
+
+    return skill_dir
+
+
 def create_resource_dirs(skill_dir, skill_name, skill_title, resources, include_examples):
     for resource in resources:
+        # resource values are already validated against ALLOWED_RESOURCES whitelist
         resource_dir = skill_dir / resource
         resource_dir.mkdir(exist_ok=True)
         if resource == "scripts":
@@ -265,8 +295,12 @@ def init_skill(skill_name, path, resources, include_examples):
     Returns:
         Path to created skill directory, or None if error
     """
-    # Determine skill directory path
-    skill_dir = Path(path).resolve() / skill_name
+    # Determine skill directory path with path traversal protection
+    try:
+        skill_dir = resolve_safe_path(path, skill_name)
+    except ValueError as e:
+        print(f"[ERROR] {e}")
+        return None
 
     # Check if directory already exists
     if skill_dir.exists():

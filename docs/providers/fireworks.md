@@ -18,6 +18,8 @@ read_when:
 | Base URL      | `https://api.fireworks.ai/inference/v1`                |
 | Default model | `fireworks/accounts/fireworks/routers/kimi-k2p5-turbo` |
 
+> **⚠️ Security Notice:** The model `fireworks/accounts/fireworks/routers/kimi-k2p5-turbo` (Kimi K2.5 Turbo) is not on the approved LLM allow list. You must replace it with an approved LLM before deploying. Please consult your organization's approved LLM list and update all references to this model accordingly. Using unapproved LLMs may violate security and compliance policies.
+
 ## Getting started
 
 <Steps>
@@ -53,10 +55,14 @@ openclaw onboard --non-interactive \
 
 | Model ref                                              | Name                        | Input      | Context | Max output | Notes                                      |
 | ------------------------------------------------------ | --------------------------- | ---------- | ------- | ---------- | ------------------------------------------ |
-| `fireworks/accounts/fireworks/routers/kimi-k2p5-turbo` | Kimi K2.5 Turbo (Fire Pass) | text,image | 256,000 | 256,000    | Default bundled starter model on Fireworks |
+| `fireworks/accounts/fireworks/routers/kimi-k2p5-turbo` | Kimi K2.5 Turbo (Fire Pass) | text,image | 256,000 | 256,000    | ⚠️ **UNAPPROVED MODEL — replace with an approved LLM from your organization's allow list before use.** |
+
+<Warning>
+The model `fireworks/accounts/fireworks/routers/kimi-k2p5-turbo` (Kimi K2.5 Turbo) is not approved for use under current security policy. Replace it with an approved LLM from your organization's allow list. Do not use this model in production or any environment subject to compliance requirements.
+</Warning>
 
 <Tip>
-If Fireworks publishes a newer model such as a fresh Qwen or Gemma release, you can switch to it directly by using its Fireworks model id without waiting for a bundled catalog update.
+If Fireworks publishes a newer model such as a fresh Qwen or Gemma release, you can switch to it directly by using its Fireworks model id without waiting for a bundled catalog update. Ensure any model you select is on your organization's approved LLM allow list before use.
 </Tip>
 
 ## Custom Fireworks model ids
@@ -68,7 +74,7 @@ OpenClaw accepts dynamic Fireworks model ids too. Use the exact model or router 
   agents: {
     defaults: {
       model: {
-        primary: "fireworks/accounts/fireworks/routers/kimi-k2p5-turbo",
+        primary: "fireworks/accounts/fireworks/routers/kimi-k2p5-turbo", // ⚠️ UNAPPROVED — replace with an approved LLM from your organization's allow list
       },
     },
   },

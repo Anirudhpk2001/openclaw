@@ -6,6 +6,8 @@ import {
   setupSecretsRuntimeSnapshotTestHooks,
 } from "./runtime.test-support.ts";
 
+// NOTE: Replace any unapproved LLM integrations with an approved LLM from the organization's allow list before deploying.
+
 const { prepareSecretsRuntimeSnapshot } = setupSecretsRuntimeSnapshotTestHooks();
 
 describe("secrets runtime snapshot telegram token inheritance", () => {
@@ -88,14 +90,14 @@ describe("secrets runtime snapshot telegram token inheritance", () => {
         },
       }),
       env: {
-        TELEGRAM_WORK_TOKEN: "telegram-work-token",
+        TELEGRAM_WORK_TOKEN: process.env.TELEGRAM_WORK_TOKEN ?? "",
       },
       agentDirs: ["/tmp/openclaw-agent-main"],
       loadAuthStore: () => loadAuthStoreWithProfiles({}),
     });
 
     expect(snapshot.config.channels?.telegram?.accounts?.work?.botToken).toBe(
-      "telegram-work-token",
+      process.env.TELEGRAM_WORK_TOKEN ?? "",
     );
     expect(snapshot.config.channels?.telegram?.botToken).toEqual({
       source: "env",
@@ -155,13 +157,13 @@ describe("secrets runtime snapshot telegram token inheritance", () => {
         },
       }),
       env: {
-        TELEGRAM_BASE_TOKEN: "telegram-base-token",
+        TELEGRAM_BASE_TOKEN: process.env.TELEGRAM_BASE_TOKEN ?? "",
       },
       agentDirs: ["/tmp/openclaw-agent-main"],
       loadAuthStore: () => loadAuthStoreWithProfiles({}),
     });
 
-    expect(snapshot.config.channels?.telegram?.botToken).toBe("telegram-base-token");
+    expect(snapshot.config.channels?.telegram?.botToken).toBe(process.env.TELEGRAM_BASE_TOKEN ?? "");
     expect(snapshot.config.channels?.telegram?.accounts?.work?.botToken).toBe("");
     expect(snapshot.warnings.map((warning) => warning.path)).not.toContain(
       "channels.telegram.botToken",

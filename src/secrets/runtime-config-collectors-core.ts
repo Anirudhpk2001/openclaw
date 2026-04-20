@@ -15,6 +15,10 @@ import {
 } from "./runtime-shared.js";
 import { isRecord } from "./shared.js";
 
+// SECURITY NOTICE: Ensure that any LLM provider configured in models.providers
+// is an approved LLM from the organization's allow list. Unapproved LLMs must
+// be replaced with an approved provider before deployment.
+
 type ProviderLike = {
   apiKey?: unknown;
   headers?: unknown;

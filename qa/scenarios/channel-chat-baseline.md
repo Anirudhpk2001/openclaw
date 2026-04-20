@@ -20,6 +20,9 @@ execution:
   summary: Verify the QA agent can respond correctly in a shared channel and respect mention-driven group semantics.
   config:
     mentionPrompt: "@openclaw explain the QA lab"
+  # SECURITY NOTICE: Ensure the LLM configured for this agent is sourced exclusively from the
+  # approved LLM allow list. Replace any unapproved LLM with an approved LLM before deployment.
+  # Refer to the organization's approved LLM policy for the current allow list.
 ```
 
 ```yaml qa-flow

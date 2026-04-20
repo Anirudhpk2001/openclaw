@@ -29,6 +29,19 @@ function assertValidLaunchAgentLabel(label: string): string {
   return trimmed;
 }
 
+function assertValidPlistPath(filePath: string): string {
+  const resolved = path.resolve(filePath);
+  const home = os.homedir();
+  const allowedBase = path.join(home, "Library", "LaunchAgents");
+  if (!resolved.startsWith(allowedBase + path.sep) && resolved !== allowedBase) {
+    throw new Error(`Plist path is outside the allowed directory: ${sanitizeForLog(resolved)}`);
+  }
+  if (!/^[A-Za-z0-9._\-/]+$/.test(resolved)) {
+    throw new Error(`Plist path contains invalid characters: ${sanitizeForLog(resolved)}`);
+  }
+  return resolved;
+}
+
 function resolveGuiDomain(): string {
   if (typeof process.getuid !== "function") {
     return "gui/501";
@@ -50,7 +63,10 @@ export function resolveLaunchdRestartTarget(
   const domain = resolveGuiDomain();
   const label = resolveLaunchAgentLabel(env);
   const home = normalizeOptionalString(env.HOME) || os.homedir();
-  const plistPath = path.join(home, "Library", "LaunchAgents", `${label}.plist`);
+  const resolvedHome = path.resolve(home);
+  const plistPath = assertValidPlistPath(
+    path.join(resolvedHome, "Library", "LaunchAgents", `${label}.plist`),
+  );
   return {
     domain,
     label,
@@ -115,6 +131,37 @@ fi
 `;
 }
 
+function buildSafeEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  overrides?: Record<string, string | undefined>,
+): NodeJS.ProcessEnv {
+  const allowedKeys = new Set([
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TMPDIR",
+    "TERM",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "PATH",
+    "XPC_SERVICE_NAME",
+    "LAUNCH_JOB_LABEL",
+    "LAUNCH_JOB_NAME",
+    "OPENCLAW_LAUNCHD_LABEL",
+    "OPENCLAW_PROFILE",
+  ]);
+  const safeEnv: NodeJS.ProcessEnv = {};
+  for (const key of allowedKeys) {
+    const val = overrides?.[key] ?? baseEnv[key];
+    if (val !== undefined) {
+      safeEnv[key] = val;
+    }
+  }
+  return safeEnv;
+}
+
 export function scheduleDetachedLaunchdRestartHandoff(params: {
   env?: Record<string, string | undefined>;
   mode: LaunchdRestartHandoffMode;
@@ -125,6 +172,9 @@ export function scheduleDetachedLaunchdRestartHandoff(params: {
     typeof params.waitForPid === "number" && Number.isFinite(params.waitForPid)
       ? Math.floor(params.waitForPid)
       : 0;
+  if (waitForPid < 0) {
+    return { ok: false, detail: "Invalid waitForPid value" };
+  }
   try {
     const child = spawn(
       "/bin/sh",
@@ -141,7 +191,7 @@ export function scheduleDetachedLaunchdRestartHandoff(params: {
       {
         detached: true,
         stdio: "ignore",
-        env: { ...process.env, ...params.env },
+        env: buildSafeEnv(process.env, params.env),
       },
     );
     child.unref();
