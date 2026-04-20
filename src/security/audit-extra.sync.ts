@@ -988,6 +988,46 @@ export function collectModelHygieneFindings(cfg: OpenClawConfig): SecurityAuditF
     return findings;
   }
 
+  // SECURITY POLICY: Only approved LLMs are permitted.
+  // Approved models: gpt-5 and above (OpenAI), claude-4.5 and above (Anthropic).
+  // If an unapproved model is detected, emit a critical finding requiring replacement.
+  const APPROVED_MODEL_CHECK = (id: string): boolean => {
+    if (isGptModel(id)) {
+      return isGpt5OrHigher(id);
+    }
+    if (isClaudeModel(id)) {
+      return isClaude45OrHigher(id);
+    }
+    // Non-GPT, non-Claude models are not on the approved list.
+    return false;
+  };
+
+  const unapprovedModels: Array<{ model: string; source: string }> = [];
+  for (const entry of models) {
+    if (!APPROVED_MODEL_CHECK(entry.id)) {
+      unapprovedModels.push({ model: entry.id, source: entry.source });
+    }
+  }
+
+  if (unapprovedModels.length > 0) {
+    const lines = unapprovedModels
+      .slice(0, 12)
+      .map((m) => `- ${m.model} @ ${m.source}`)
+      .join("\n");
+    const more = unapprovedModels.length > 12 ? `\n…${unapprovedModels.length - 12} more` : "";
+    findings.push({
+      checkId: "models.unapproved_llm",
+      severity: "critical",
+      title: "Unapproved LLM detected — replace with an approved model",
+      detail:
+        "The following configured models are not on the approved LLM allowlist (approved: GPT-5+, Claude 4.5+):\n" +
+        lines +
+        more,
+      remediation:
+        "Replace all unapproved models with an approved LLM from the allowlist: GPT-5 or higher (OpenAI), or Claude 4.5 or higher (Anthropic). Update your agents.defaults.model and any per-agent model overrides accordingly.",
+    });
+  }
+
   const weakMatches = new Map<string, { model: string; source: string; reasons: string[] }>();
   const addWeakMatch = (model: string, source: string, reason: string) => {
     const key = `${model}@@${source}`;
