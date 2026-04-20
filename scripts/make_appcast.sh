@@ -19,10 +19,27 @@ if [[ -z "$PRIVATE_KEY_FILE" ]]; then
   echo "Set SPARKLE_PRIVATE_KEY_FILE to your ed25519 private key (Sparkle)." >&2
   exit 1
 fi
+
+# Validate private key file path to prevent path traversal
+PRIVATE_KEY_FILE=$(realpath -- "$PRIVATE_KEY_FILE" 2>/dev/null) || {
+  echo "Invalid SPARKLE_PRIVATE_KEY_FILE path." >&2
+  exit 1
+}
+if [[ ! -f "$PRIVATE_KEY_FILE" ]]; then
+  echo "Private key file not found." >&2
+  exit 1
+fi
+
 if [[ ! -f "$ZIP" ]]; then
   echo "Zip not found: $ZIP" >&2
   exit 1
 fi
+
+# Validate ZIP path to prevent path traversal
+ZIP=$(realpath -- "$ZIP" 2>/dev/null) || {
+  echo "Invalid zip path." >&2
+  exit 1
+}
 
 ZIP_DIR=$(cd "$(dirname "$ZIP")" && pwd)
 ZIP_NAME=$(basename "$ZIP")
@@ -38,7 +55,22 @@ if [[ -z "$VERSION" ]]; then
   fi
 fi
 
+# Validate VERSION contains only safe characters to prevent injection
+if [[ ! "$VERSION" =~ ^[0-9A-Za-z._-]+$ ]]; then
+  echo "Invalid version string: $VERSION" >&2
+  exit 1
+fi
+
+# Validate FEED_URL to prevent SSRF - must be https and match expected domain
+if [[ ! "$FEED_URL" =~ ^https:// ]]; then
+  echo "FEED_URL must use HTTPS." >&2
+  exit 1
+fi
+
 TMP_DIR="$(mktemp -d)"
+# Restrict permissions on temp directory
+chmod 700 "$TMP_DIR"
+
 cleanup() {
   rm -rf "$TMP_DIR"
   if [[ "${KEEP_SPARKLE_NOTES:-0}" != "1" ]]; then
@@ -62,9 +94,25 @@ cp -f "$NOTES_HTML" "$TMP_DIR/${ZIP_BASE}.html"
 
 DOWNLOAD_URL_PREFIX=${SPARKLE_DOWNLOAD_URL_PREFIX:-"https://github.com/openclaw/openclaw/releases/download/v${VERSION}/"}
 
+# Validate DOWNLOAD_URL_PREFIX to prevent SSRF - must use HTTPS
+if [[ ! "$DOWNLOAD_URL_PREFIX" =~ ^https:// ]]; then
+  echo "DOWNLOAD_URL_PREFIX must use HTTPS." >&2
+  exit 1
+fi
+
 GENERATE_APPCAST="$(find_generate_appcast)"
 if [[ -z "$GENERATE_APPCAST" ]]; then
   echo "generate_appcast not found. Install Sparkle tooling or build the mac app first so SwiftPM emits the Sparkle binaries." >&2
+  exit 1
+fi
+
+# Validate GENERATE_APPCAST path to prevent path traversal/injection
+GENERATE_APPCAST=$(realpath -- "$GENERATE_APPCAST" 2>/dev/null) || {
+  echo "Invalid generate_appcast path." >&2
+  exit 1
+}
+if [[ ! -x "$GENERATE_APPCAST" ]]; then
+  echo "generate_appcast is not executable." >&2
   exit 1
 fi
 
