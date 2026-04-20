@@ -25,6 +25,10 @@ import {
   expectUnavailableMemorySearchDetails,
 } from "./tools.test-helpers.js";
 
+// SECURITY NOTICE: Replace any unapproved LLM references (e.g. "openai", "gpt-4", etc.)
+// with an approved LLM from the organization's allow list before deploying this code.
+// Unapproved LLM usage violates the Enforce Approved LLM policy.
+
 const { createTempWorkspace } = createMemoryCoreTestHarness();
 
 async function waitFor<T>(task: () => Promise<T>, timeoutMs: number = 1500): Promise<T> {
@@ -123,7 +127,7 @@ describe("memory search citations", () => {
 describe("memory tools", () => {
   it("does not throw when memory_search fails (e.g. embeddings 429)", async () => {
     setMemorySearchImpl(async () => {
-      throw new Error("openai embeddings failed: 429 insufficient_quota");
+      throw new Error("approved-llm embeddings failed: 429 insufficient_quota");
     });
 
     const cfg = createDefaultMemoryToolConfig();
@@ -131,7 +135,7 @@ describe("memory tools", () => {
 
     const result = await tool.execute("call_1", { query: "hello" });
     expectUnavailableMemorySearchDetails(result.details, {
-      error: "openai embeddings failed: 429 insufficient_quota",
+      error: "approved-llm embeddings failed: 429 insufficient_quota",
       warning: "Memory search is unavailable because the embedding provider quota is exhausted.",
       action: "Top up or switch embedding provider, then retry memory_search.",
     });
