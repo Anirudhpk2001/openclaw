@@ -3,19 +3,106 @@ import { streamOpenAIResponses } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { describe, expect, it } from "vitest";
 
+// Approved LLM model IDs
+const APPROVED_MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"];
+
+// LLM interaction logger
+function logLLMInteraction(direction: "request" | "response", data: unknown): void {
+  const timestamp = new Date().toISOString();
+  const entry = {
+    timestamp,
+    direction,
+    data,
+  };
+  // Log to console (in production this would go to a secure logging service)
+  console.log(`[LLM_INTERACTION][${timestamp}][${direction}]`, JSON.stringify(entry));
+}
+
+// Sanitize and validate input before sending to LLM
+function sanitizeInput(value: unknown): unknown {
+  if (typeof value === "string") {
+    // Remove potential prompt injection patterns and dangerous content
+    let sanitized = value
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "") // Remove control characters
+      .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "") // Remove script tags
+      .replace(/javascript:/gi, "") // Remove javascript: URIs
+      .replace(/on\w+\s*=/gi, "") // Remove event handlers
+      .trim();
+    return sanitized;
+  }
+  if (Array.isArray(value)) {
+    return value.map(sanitizeInput);
+  }
+  if (value !== null && typeof value === "object") {
+    const sanitized: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      sanitized[sanitizeInput(k) as string] = sanitizeInput(v);
+    }
+    return sanitized;
+  }
+  return value;
+}
+
+// Validate and sanitize LLM response - remove dynamic code execution primitives
+function sanitizeLLMResponse(response: unknown): unknown {
+  if (typeof response === "string") {
+    const lines = response.split("\n");
+    const sanitizedLines = lines.filter((line) => {
+      const lower = line.toLowerCase();
+      // Remove lines containing eval or dynamic code-execution primitives
+      if (/\beval\s*\(/.test(lower)) return false;
+      if (/\bexec\s*\(/.test(lower)) return false;
+      if (/\bnew\s+Function\s*\(/.test(lower)) return false;
+      if (/subprocess\s*\(\s*.*shell\s*=\s*True/.test(line)) return false;
+      if (/\bos\.system\s*\(/.test(lower)) return false;
+      if (/\bspawn\s*\(/.test(lower)) return false;
+      if (/\bexecSync\s*\(/.test(lower)) return false;
+      if (/\bspawnSync\s*\(/.test(lower)) return false;
+      if (/\bsetTimeout\s*\(\s*['"`]/.test(line)) return false;
+      if (/\bsetInterval\s*\(\s*['"`]/.test(line)) return false;
+      return true;
+    });
+    return sanitizedLines.join("\n");
+  }
+  if (Array.isArray(response)) {
+    return response.map(sanitizeLLMResponse);
+  }
+  if (response !== null && typeof response === "object") {
+    const sanitized: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(response as Record<string, unknown>)) {
+      sanitized[k] = sanitizeLLMResponse(v);
+    }
+    return sanitized;
+  }
+  return response;
+}
+
+// Validate model against approved list
+function validateModel(model: Model<"openai-responses">): void {
+  if (!APPROVED_MODELS.includes(model.id)) {
+    console.warn(
+      `[SECURITY WARNING] Model "${model.id}" is not in the approved LLM list. ` +
+        `Please replace it with an approved model from the following list: ${APPROVED_MODELS.join(", ")}. ` +
+        `Using unapproved models may violate security policy.`,
+    );
+  }
+}
+
 function buildModel(): Model<"openai-responses"> {
-  return {
+  const model = {
     id: "gpt-5.4",
     name: "gpt-5.4",
-    api: "openai-responses",
-    provider: "openai",
+    api: "openai-responses" as const,
+    provider: "openai" as const,
     baseUrl: "https://api.openai.com/v1",
     reasoning: true,
-    input: ["text"],
+    input: ["text"] as ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 128_000,
     maxTokens: 4096,
   };
+  validateModel(model);
+  return model;
 }
 
 function extractInput(payload: Record<string, unknown> | undefined) {
@@ -88,12 +175,26 @@ async function runAbortedOpenAIResponsesStream(params: {
   controller.abort();
   let payload: Record<string, unknown> | undefined;
 
+  // Sanitize messages before sending to LLM
+  const sanitizedMessages = sanitizeInput(params.messages) as typeof params.messages;
+  const sanitizedTools = params.tools
+    ? (sanitizeInput(params.tools) as typeof params.tools)
+    : undefined;
+
+  // Log the outgoing request
+  logLLMInteraction("request", {
+    model: buildModel().id,
+    systemPrompt: "system",
+    messages: sanitizedMessages,
+    tools: sanitizedTools,
+  });
+
   const stream = streamOpenAIResponses(
     buildModel(),
     {
-      systemPrompt: "system",
-      messages: params.messages,
-      ...(params.tools ? { tools: params.tools } : {}),
+      systemPrompt: sanitizeInput("system") as string,
+      messages: sanitizedMessages,
+      ...(sanitizedTools ? { tools: sanitizedTools } : {}),
     },
     {
       apiKey: "test",
@@ -104,11 +205,17 @@ async function runAbortedOpenAIResponsesStream(params: {
     },
   );
 
-  await stream.result();
+  const result = await stream.result();
+
+  // Log and sanitize the response
+  logLLMInteraction("response", result);
+  const sanitizedResult = sanitizeLLMResponse(result);
+
   const input = extractInput(payload);
   return {
     input,
     types: extractInputTypes(input),
+    sanitizedResult,
   };
 }
 
