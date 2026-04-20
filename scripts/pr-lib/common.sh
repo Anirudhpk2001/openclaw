@@ -93,6 +93,15 @@ print_review_stdout_summary() {
 
 print_relevant_log_excerpt() {
   local log_file="$1"
+
+  # Validate that log_file does not contain path traversal or suspicious characters
+  case "$log_file" in
+    *..*)
+      echo "Invalid log file path"
+      return 1
+      ;;
+  esac
+
   if [ ! -s "$log_file" ]; then
     echo "(no output captured)"
     return 0
@@ -100,7 +109,7 @@ print_relevant_log_excerpt() {
 
   local filtered_log
   filtered_log=$(mktemp)
-  if rg -n -i 'error|err|failed|fail|fatal|panic|exception|TypeError|ReferenceError|SyntaxError|ELIFECYCLE|ERR_' "$log_file" >"$filtered_log"; then
+  if rg -n -i 'error|err|failed|fail|fatal|panic|exception|TypeError|ReferenceError|SyntaxError|ELIFECYCLE|ERR_' -- "$log_file" >"$filtered_log"; then
     echo "Relevant log lines:"
     tail -n 120 "$filtered_log"
   else
@@ -130,6 +139,14 @@ run_quiet_logged() {
   local log_file="$2"
   shift 2
 
+  # Validate log_file path to prevent path traversal
+  case "$log_file" in
+    *..*)
+      echo "Invalid log file path"
+      return 1
+      ;;
+  esac
+
   mkdir -p .local
   if "$@" >"$log_file" 2>&1; then
     echo "$label passed"
@@ -153,6 +170,28 @@ wait_for_pr_head_sha() {
   local expected_sha="$2"
   local max_attempts="${3:-6}"
   local sleep_seconds="${4:-2}"
+
+  # Validate pr is a safe value (number or owner/repo#number style, no shell metacharacters)
+  if ! printf '%s' "$pr" | grep -qE '^[a-zA-Z0-9_./:@#-]+$'; then
+    echo "Invalid PR identifier"
+    return 1
+  fi
+
+  # Validate expected_sha is a valid git SHA (hex characters only)
+  if ! printf '%s' "$expected_sha" | grep -qE '^[0-9a-fA-F]{1,64}$'; then
+    echo "Invalid SHA value"
+    return 1
+  fi
+
+  # Validate max_attempts and sleep_seconds are positive integers
+  if ! printf '%s' "$max_attempts" | grep -qE '^[0-9]+$'; then
+    echo "Invalid max_attempts value"
+    return 1
+  fi
+  if ! printf '%s' "$sleep_seconds" | grep -qE '^[0-9]+$'; then
+    echo "Invalid sleep_seconds value"
+    return 1
+  fi
 
   local attempt
   for attempt in $(seq 1 "$max_attempts"); do
@@ -179,6 +218,16 @@ merge_author_email_candidates() {
   local reviewer="$1"
   local reviewer_id="$2"
 
+  # Validate reviewer and reviewer_id to prevent injection
+  if ! printf '%s' "$reviewer" | grep -qE '^[a-zA-Z0-9_.-]+$'; then
+    echo "Invalid reviewer name" >&2
+    return 1
+  fi
+  if ! printf '%s' "$reviewer_id" | grep -qE '^[0-9]+$'; then
+    echo "Invalid reviewer ID" >&2
+    return 1
+  fi
+
   local gh_email
   gh_email=$(gh api user --jq '.email // ""' 2>/dev/null || true)
   local git_email
@@ -204,6 +253,13 @@ common_repo_root() {
 
 worktree_path_for_branch() {
   local branch="$1"
+
+  # Validate branch name to prevent injection into git commands
+  if ! printf '%s' "$branch" | grep -qE '^[a-zA-Z0-9_./:@#-]+$'; then
+    echo "Invalid branch name" >&2
+    return 1
+  fi
+
   local ref="refs/heads/$branch"
 
   git worktree list --porcelain | awk -v ref="$ref" '
@@ -315,6 +371,13 @@ remove_worktree_if_present() {
 
 delete_local_branch_if_safe() {
   local branch="$1"
+
+  # Validate branch name to prevent injection into git commands
+  if ! printf '%s' "$branch" | grep -qE '^[a-zA-Z0-9_./:@#-]+$'; then
+    echo "Invalid branch name" >&2
+    return 1
+  fi
+
   local ref="refs/heads/$branch"
 
   if ! git show-ref --verify --quiet "$ref"; then
