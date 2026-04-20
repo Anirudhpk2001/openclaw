@@ -1,5 +1,14 @@
 set_review_mode() {
   local mode="$1"
+  # Validate mode to prevent injection
+  case "$mode" in
+    main|pr)
+      ;;
+    *)
+      echo "Invalid review mode: $mode"
+      return 1
+      ;;
+  esac
   # Security: shell-escape values to prevent command injection when sourced.
   printf '%s=%q\n' \
     REVIEW_MODE "$mode" \
@@ -9,6 +18,12 @@ set_review_mode() {
 
 review_claim() {
   local pr="$1"
+  # Validate PR number is a positive integer
+  if ! printf '%s' "$pr" | grep -qE '^[0-9]+$'; then
+    echo "Invalid PR number: $pr"
+    return 1
+  fi
+
   local root
   root=$(repo_root)
   cd "$root"
@@ -23,6 +38,11 @@ review_claim() {
     user_log=".local/review-claim-user-attempt-$attempt.log"
 
     if reviewer=$(gh api user --jq .login 2>"$user_log"); then
+      # Validate reviewer login contains only safe characters
+      if ! printf '%s' "$reviewer" | grep -qE '^[a-zA-Z0-9_-]+$'; then
+        echo "Invalid reviewer login format."
+        return 1
+      fi
       printf "%s\n" "$reviewer" >"$user_log"
       break
     fi
@@ -63,6 +83,11 @@ review_claim() {
 
 review_checkout_main() {
   local pr="$1"
+  # Validate PR number is a positive integer
+  if ! printf '%s' "$pr" | grep -qE '^[0-9]+$'; then
+    echo "Invalid PR number: $pr"
+    return 1
+  fi
   enter_worktree "$pr" false
   git fetch origin main
   git checkout --detach origin/main
@@ -75,6 +100,11 @@ review_checkout_main() {
 
 review_checkout_pr() {
   local pr="$1"
+  # Validate PR number is a positive integer
+  if ! printf '%s' "$pr" | grep -qE '^[0-9]+$'; then
+    echo "Invalid PR number: $pr"
+    return 1
+  fi
   enter_worktree "$pr" false
   git fetch origin "pull/$pr/head:pr-$pr" --force
   git checkout --detach "pr-$pr"
@@ -87,6 +117,11 @@ review_checkout_pr() {
 
 review_guard() {
   local pr="$1"
+  # Validate PR number is a positive integer
+  if ! printf '%s' "$pr" | grep -qE '^[0-9]+$'; then
+    echo "Invalid PR number: $pr"
+    return 1
+  fi
   enter_worktree "$pr" false
   require_artifact .local/review-mode.env
   require_artifact .local/pr-meta.env
@@ -100,10 +135,20 @@ review_guard() {
   local head_sha
   head_sha=$(git rev-parse HEAD)
 
+  # Validate head_sha is a valid hex SHA
+  if ! printf '%s' "$head_sha" | grep -qE '^[0-9a-f]{40}$'; then
+    echo "Review guard failed: invalid HEAD SHA format"
+    exit 1
+  fi
+
   case "${REVIEW_MODE:-}" in
     main)
       local expected_main_sha
       expected_main_sha=$(git rev-parse origin/main)
+      if ! printf '%s' "$expected_main_sha" | grep -qE '^[0-9a-f]{40}$'; then
+        echo "Review guard failed: invalid origin/main SHA format"
+        exit 1
+      fi
       if [ "$head_sha" != "$expected_main_sha" ]; then
         echo "Review guard failed: expected HEAD at origin/main ($expected_main_sha) for main baseline mode, got $head_sha"
         exit 1
@@ -112,6 +157,11 @@ review_guard() {
     pr)
       if [ -z "${PR_HEAD_SHA:-}" ]; then
         echo "Review guard failed: missing PR_HEAD_SHA in .local/pr-meta.env"
+        exit 1
+      fi
+      # Validate PR_HEAD_SHA is a valid hex SHA
+      if ! printf '%s' "$PR_HEAD_SHA" | grep -qE '^[0-9a-f]{40}$'; then
+        echo "Review guard failed: invalid PR_HEAD_SHA format"
         exit 1
       fi
       if [ "$head_sha" != "$PR_HEAD_SHA" ]; then
@@ -133,6 +183,11 @@ review_guard() {
 
 review_artifacts_init() {
   local pr="$1"
+  # Validate PR number is a positive integer
+  if ! printf '%s' "$pr" | grep -qE '^[0-9]+$'; then
+    echo "Invalid PR number: $pr"
+    return 1
+  fi
   enter_worktree "$pr" false
   require_artifact .local/pr-meta.env
 
@@ -200,6 +255,11 @@ EOF_JSON
 
 review_validate_artifacts() {
   local pr="$1"
+  # Validate PR number is a positive integer
+  if ! printf '%s' "$pr" | grep -qE '^[0-9]+$'; then
+    echo "Invalid PR number: $pr"
+    return 1
+  fi
   enter_worktree "$pr" false
   require_artifact .local/review.md
   require_artifact .local/review.json
@@ -452,11 +512,24 @@ review_tests() {
     exit 2
   fi
 
+  # Validate PR number is a positive integer
+  if ! printf '%s' "$pr" | grep -qE '^[0-9]+$'; then
+    echo "Invalid PR number: $pr"
+    return 1
+  fi
+
   enter_worktree "$pr" false
   review_guard "$pr"
 
   local target
   for target in "$@"; do
+    # Validate test target path to prevent path traversal
+    local normalized_target
+    normalized_target=$(printf '%s' "$target" | sed 's|/\./|/|g; s|//|/|g')
+    if printf '%s' "$normalized_target" | grep -qE '(^\.\.|/\.\.)'; then
+      echo "Invalid test target path (path traversal detected): $target"
+      exit 1
+    fi
     if [ ! -f "$target" ]; then
       echo "Missing test target file: $target"
       exit 1
@@ -494,6 +567,11 @@ review_tests() {
 
 review_init() {
   local pr="$1"
+  # Validate PR number is a positive integer
+  if ! printf '%s' "$pr" | grep -qE '^[0-9]+$'; then
+    echo "Invalid PR number: $pr"
+    return 1
+  fi
   enter_worktree "$pr" true
 
   local json
@@ -503,6 +581,12 @@ review_init() {
   git fetch origin "pull/$pr/head:pr-$pr" --force
   local mb
   mb=$(git merge-base origin/main "pr-$pr")
+
+  # Validate merge base is a valid hex SHA
+  if ! printf '%s' "$mb" | grep -qE '^[0-9a-f]{40}$'; then
+    echo "Invalid merge base SHA format"
+    return 1
+  fi
 
   # Security: shell-escape values to prevent command injection when sourced.
   printf '%s=%q\n' \
