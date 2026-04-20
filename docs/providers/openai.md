@@ -16,6 +16,8 @@ OpenAI provides developer APIs for GPT models. OpenClaw supports two auth routes
 
 OpenAI explicitly supports subscription OAuth usage in external tools and workflows like OpenClaw.
 
+> **⚠️ Security Notice:** Some model references in this documentation (e.g., `gpt-5.4`, `gpt-5.4-pro`, `gpt-5.3-codex-spark`, `gpt-realtime`, `gpt-image-1`, `sora-2`) may not be on your organization's approved LLM allow list. You must replace any unapproved model with an approved model from your organization's allow list before use. Contact your security or AI governance team to obtain the current list of approved models. Using unapproved LLMs may violate organizational policy and introduce unreviewed security, privacy, or compliance risks.
+
 ## Getting started
 
 Choose your preferred auth method and follow the setup steps.
@@ -53,6 +55,8 @@ Choose your preferred auth method and follow the setup steps.
     | `openai/gpt-5.4` | Direct OpenAI Platform API | `OPENAI_API_KEY` |
     | `openai/gpt-5.4-pro` | Direct OpenAI Platform API | `OPENAI_API_KEY` |
 
+    > **⚠️ Security Notice:** `openai/gpt-5.4` and `openai/gpt-5.4-pro` must be verified against your organization's approved LLM allow list before use. Replace with an approved model if these are not listed.
+
     <Note>
     ChatGPT/Codex sign-in is routed through `openai-codex/*`, not `openai/*`.
     </Note>
@@ -65,6 +69,8 @@ Choose your preferred auth method and follow the setup steps.
       agents: { defaults: { model: { primary: "openai/gpt-5.4" } } },
     }
     ```
+
+    > **⚠️ Security Notice:** Replace `openai/gpt-5.4` in the config example above with an approved model from your organization's allow list.
 
     <Warning>
     OpenClaw does **not** expose `openai/gpt-5.3-codex-spark` on the direct API path. Live OpenAI API requests reject that model. Spark is Codex-only.
@@ -106,6 +112,8 @@ Choose your preferred auth method and follow the setup steps.
     | `openai-codex/gpt-5.4` | ChatGPT/Codex OAuth | Codex sign-in |
     | `openai-codex/gpt-5.3-codex-spark` | ChatGPT/Codex OAuth | Codex sign-in (entitlement-dependent) |
 
+    > **⚠️ Security Notice:** `openai-codex/gpt-5.4` and `openai-codex/gpt-5.3-codex-spark` must be verified against your organization's approved LLM allow list before use. Replace with an approved model if these are not listed.
+
     <Note>
     This route is intentionally separate from `openai/gpt-5.4`. Use `openai/*` with an API key for direct Platform access, and `openai-codex/*` for Codex subscription access.
     </Note>
@@ -117,6 +125,8 @@ Choose your preferred auth method and follow the setup steps.
       agents: { defaults: { model: { primary: "openai-codex/gpt-5.4" } } },
     }
     ```
+
+    > **⚠️ Security Notice:** Replace `openai-codex/gpt-5.4` in the config example above with an approved model from your organization's allow list.
 
     <Tip>
     If onboarding reuses an existing Codex CLI login, those credentials stay managed by Codex CLI. On expiry, OpenClaw re-reads the external Codex source first and writes the refreshed credential back to Codex storage.
@@ -145,6 +155,8 @@ Choose your preferred auth method and follow the setup steps.
     }
     ```
 
+    > **⚠️ Security Notice:** Replace `gpt-5.4` in the config example above with an approved model ID from your organization's allow list.
+
     <Note>
     Use `contextWindow` to declare native model metadata. Use `contextTokens` to limit the runtime context budget.
     </Note>
@@ -163,6 +175,8 @@ The bundled `openai` plugin registers image generation through the `image_genera
 | Edit mode                 | Enabled (up to 5 reference images) |
 | Size overrides            | Supported                          |
 | Aspect ratio / resolution | Not forwarded to OpenAI Images API |
+
+> **⚠️ Security Notice:** `openai/gpt-image-1` must be verified against your organization's approved LLM allow list before use. Replace with an approved model if it is not listed.
 
 ```json5
 {
@@ -189,6 +203,8 @@ The bundled `openai` plugin registers video generation through the `video_genera
 | Reference inputs | 1 image or 1 video                                                                |
 | Size overrides   | Supported                                                                         |
 | Other overrides  | `aspectRatio`, `resolution`, `audio`, `watermark` are ignored with a tool warning |
+
+> **⚠️ Security Notice:** `openai/sora-2` must be verified against your organization's approved LLM allow list before use. Replace with an approved model if it is not listed.
 
 ```json5
 {
@@ -253,6 +269,8 @@ Values are case-insensitive at runtime, so `"Off"` and `"off"` both disable the 
     | API key | `messages.tts.providers.openai.apiKey` | Falls back to `OPENAI_API_KEY` |
     | Base URL | `messages.tts.providers.openai.baseUrl` | `https://api.openai.com/v1` |
 
+    > **⚠️ Security Notice:** `gpt-4o-mini-tts`, `tts-1`, and `tts-1-hd` must be verified against your organization's approved LLM allow list before use. Replace with approved models if they are not listed.
+
     Available models: `gpt-4o-mini-tts`, `tts-1`, `tts-1-hd`. Available voices: `alloy`, `ash`, `ballad`, `cedar`, `coral`, `echo`, `fable`, `juniper`, `marin`, `onyx`, `nova`, `sage`, `shimmer`, `verse`.
 
     ```json5
@@ -283,6 +301,8 @@ Values are case-insensitive at runtime, so `"Off"` and `"off"` both disable the 
     | VAD threshold | `...openai.vadThreshold` | `0.5` |
     | API key | `...openai.apiKey` | Falls back to `OPENAI_API_KEY` |
 
+    > **⚠️ Security Notice:** `gpt-4o-transcribe` must be verified against your organization's approved LLM allow list before use. Replace with an approved model if it is not listed.
+
     <Note>
     Uses a WebSocket connection to `wss://api.openai.com/v1/realtime` with G.711 u-law audio.
     </Note>
@@ -300,6 +320,8 @@ Values are case-insensitive at runtime, so `"Off"` and `"off"` both disable the 
     | VAD threshold | `...openai.vadThreshold` | `0.5` |
     | Silence duration | `...openai.silenceDurationMs` | `500` |
     | API key | `...openai.apiKey` | Falls back to `OPENAI_API_KEY` |
+
+    > **⚠️ Security Notice:** `gpt-realtime` must be verified against your organization's approved LLM allow list before use. Replace with an approved model if it is not listed.
 
     <Note>
     Supports Azure OpenAI via `azureEndpoint` and `azureDeployment` config keys. Supports bidirectional tool calling. Uses G.711 u-law audio format.
@@ -340,6 +362,8 @@ Values are case-insensitive at runtime, so `"Off"` and `"off"` both disable the 
     }
     ```
 
+    > **⚠️ Security Notice:** Replace `openai-codex/gpt-5.4` in the config example above with an approved model from your organization's allow list.
+
     Related OpenAI docs:
     - [Realtime API with WebSocket](https://platform.openai.com/docs/guides/realtime-websocket)
     - [Streaming API responses (SSE)](https://platform.openai.com/docs/guides/streaming-responses)
@@ -364,6 +388,8 @@ Values are case-insensitive at runtime, so `"Off"` and `"off"` both disable the 
     }
     ```
 
+    > **⚠️ Security Notice:** Replace `openai/gpt-5.4` in the config example above with an approved model from your organization's allow list.
+
   </Accordion>
 
   <Accordion title="Fast mode">
@@ -387,6 +413,8 @@ Values are case-insensitive at runtime, so `"Off"` and `"off"` both disable the 
     }
     ```
 
+    > **⚠️ Security Notice:** Replace `openai/gpt-5.4` and `openai-codex/gpt-5.4` in the config example above with approved models from your organization's allow list.
+
     <Note>
     Session overrides win over config. Clearing the session override in the Sessions UI returns the session to the configured default.
     </Note>
@@ -408,6 +436,8 @@ Values are case-insensitive at runtime, so `"Off"` and `"off"` both disable the 
       },
     }
     ```
+
+    > **⚠️ Security Notice:** Replace `openai/gpt-5.4` and `openai-codex/gpt-5.4` in the config example above with approved models from your organization's allow list.
 
     Supported values: `auto`, `default`, `flex`, `priority`.
 
@@ -441,6 +471,8 @@ Values are case-insensitive at runtime, so `"Off"` and `"off"` both disable the 
           },
         }
         ```
+
+        > **⚠️ Security Notice:** Replace `azure-openai-responses/gpt-5.4` in the config example above with an approved model from your organization's allow list.
       </Tab>
       <Tab title="Custom threshold">
         ```json5
@@ -459,6 +491,8 @@ Values are case-insensitive at runtime, so `"Off"` and `"off"` both disable the 
           },
         }
         ```
+
+        > **⚠️ Security Notice:** Replace `openai/gpt-5.4` in the config example above with an approved model from your organization's allow list.
       </Tab>
       <Tab title="Disable">
         ```json5
@@ -474,6 +508,8 @@ Values are case-insensitive at runtime, so `"Off"` and `"off"` both disable the 
           },
         }
         ```
+
+        > **⚠️ Security Notice:** Replace `openai/gpt-5.4` in the config example above with an approved model from your organization's allow list.
       </Tab>
     </Tabs>
 
