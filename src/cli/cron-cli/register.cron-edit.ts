@@ -14,6 +14,18 @@ import {
 } from "./schedule-options.js";
 import { getCronChannelOptions, parseDurationMs, warnIfCronSchedulerDisabled } from "./shared.js";
 
+const ALLOWED_SESSION_TARGETS = new Set(["main", "isolated"]);
+const ALLOWED_WAKE_MODES = new Set(["now", "next-heartbeat"]);
+const ALLOWED_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+const ALLOWED_DELIVERY_MODES = new Set(["announce", "none"]);
+const MAX_STRING_LENGTH = 4096;
+const MAX_NAME_LENGTH = 256;
+const MAX_ID_LENGTH = 128;
+
+const sanitizeString = (value: string, maxLength: number = MAX_STRING_LENGTH): string => {
+  return String(value).slice(0, maxLength);
+};
+
 const assignIf = (
   target: Record<string, unknown>,
   key: string,
@@ -88,6 +100,12 @@ export function registerCronEditCommand(cron: Command) {
       )
       .action(async (id, opts) => {
         try {
+          // Validate id
+          if (typeof id !== "string" || !id.trim()) {
+            throw new Error("Invalid job id.");
+          }
+          const sanitizedId = sanitizeString(id.trim(), MAX_ID_LENGTH);
+
           if (opts.session === "main" && opts.message) {
             throw new Error(
               "Main jobs cannot use --message; use --system-event or --session isolated.",
@@ -103,10 +121,10 @@ export function registerCronEditCommand(cron: Command) {
           }
           const patch: Record<string, unknown> = {};
           if (typeof opts.name === "string") {
-            patch.name = opts.name;
+            patch.name = sanitizeString(opts.name, MAX_NAME_LENGTH);
           }
           if (typeof opts.description === "string") {
-            patch.description = opts.description;
+            patch.description = sanitizeString(opts.description, MAX_STRING_LENGTH);
           }
           if (opts.enable && opts.disable) {
             throw new Error("Choose --enable or --disable, not both");
@@ -127,10 +145,18 @@ export function registerCronEditCommand(cron: Command) {
             patch.deleteAfterRun = false;
           }
           if (typeof opts.session === "string") {
-            patch.sessionTarget = opts.session;
+            const sessionTarget = opts.session.trim();
+            if (!ALLOWED_SESSION_TARGETS.has(sessionTarget)) {
+              throw new Error("Invalid --session value. Must be 'main' or 'isolated'.");
+            }
+            patch.sessionTarget = sessionTarget;
           }
           if (typeof opts.wake === "string") {
-            patch.wakeMode = opts.wake;
+            const wakeMode = opts.wake.trim();
+            if (!ALLOWED_WAKE_MODES.has(wakeMode)) {
+              throw new Error("Invalid --wake value. Must be 'now' or 'next-heartbeat'.");
+            }
+            patch.wakeMode = wakeMode;
           }
           if (opts.agent && opts.clearAgent) {
             throw new Error("Use --agent or --clear-agent, not both");
@@ -145,7 +171,7 @@ export function registerCronEditCommand(cron: Command) {
             throw new Error("Use --session-key or --clear-session-key, not both");
           }
           if (typeof opts.sessionKey === "string" && opts.sessionKey.trim()) {
-            patch.sessionKey = opts.sessionKey.trim();
+            patch.sessionKey = sanitizeString(opts.sessionKey.trim(), MAX_ID_LENGTH);
           }
           if (opts.clearSessionKey) {
             patch.sessionKey = null;
@@ -165,19 +191,28 @@ export function registerCronEditCommand(cron: Command) {
             const listed = (await callGatewayFromCli("cron.list", opts, {
               includeDisabled: true,
             })) as { jobs?: CronJob[] } | null;
-            const existing = (listed?.jobs ?? []).find((job) => job.id === id);
+            const existing = (listed?.jobs ?? []).find((job) => job.id === sanitizedId);
             if (!existing) {
-              throw new Error(`unknown cron job id: ${id}`);
+              throw new Error(`unknown cron job id`);
             }
             patch.schedule = applyExistingCronSchedulePatch(existing.schedule, scheduleRequest);
           }
 
           const hasSystemEventPatch = typeof opts.systemEvent === "string";
           const model = normalizeOptionalString(opts.model);
-          const thinking = normalizeOptionalString(opts.thinking);
+          const thinkingRaw = normalizeOptionalString(opts.thinking);
+          if (thinkingRaw && !ALLOWED_THINKING_LEVELS.has(thinkingRaw)) {
+            throw new Error(
+              "Invalid --thinking value. Must be one of: off, minimal, low, medium, high, xhigh.",
+            );
+          }
+          const thinking = thinkingRaw;
           const timeoutSeconds = opts.timeoutSeconds
             ? Number.parseInt(String(opts.timeoutSeconds), 10)
             : undefined;
+          if (timeoutSeconds !== undefined && (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0)) {
+            throw new Error("Invalid --timeout-seconds (must be a positive integer).");
+          }
           const hasTimeoutSeconds = Boolean(timeoutSeconds && Number.isFinite(timeoutSeconds));
           const hasDeliveryModeFlag = opts.announce || typeof opts.deliver === "boolean";
           const hasDeliveryTarget = typeof opts.channel === "string" || typeof opts.to === "string";
@@ -201,11 +236,16 @@ export function registerCronEditCommand(cron: Command) {
           if (hasSystemEventPatch) {
             patch.payload = {
               kind: "systemEvent",
-              text: String(opts.systemEvent),
+              text: sanitizeString(String(opts.systemEvent)),
             };
           } else if (hasAgentTurnPatch) {
             const payload: Record<string, unknown> = { kind: "agentTurn" };
-            assignIf(payload, "message", String(opts.message), typeof opts.message === "string");
+            assignIf(
+              payload,
+              "message",
+              sanitizeString(String(opts.message)),
+              typeof opts.message === "string",
+            );
             assignIf(payload, "model", model, Boolean(model));
             assignIf(payload, "thinking", thinking, Boolean(thinking));
             assignIf(payload, "timeoutSeconds", timeoutSeconds, hasTimeoutSeconds);
@@ -229,22 +269,26 @@ export function registerCronEditCommand(cron: Command) {
           if (hasDeliveryModeFlag || hasDeliveryTarget || hasDeliveryAccount || hasBestEffort) {
             const delivery: Record<string, unknown> = {};
             if (hasDeliveryModeFlag) {
-              delivery.mode = opts.announce || opts.deliver === true ? "announce" : "none";
+              const resolvedMode = opts.announce || opts.deliver === true ? "announce" : "none";
+              if (!ALLOWED_DELIVERY_MODES.has(resolvedMode)) {
+                throw new Error("Invalid delivery mode.");
+              }
+              delivery.mode = resolvedMode;
             } else if (hasBestEffort) {
               // Back-compat: toggling best-effort alone has historically implied announce mode.
               delivery.mode = "announce";
             }
             if (typeof opts.channel === "string") {
               const channel = opts.channel.trim();
-              delivery.channel = channel ? channel : undefined;
+              delivery.channel = channel ? sanitizeString(channel, MAX_ID_LENGTH) : undefined;
             }
             if (typeof opts.to === "string") {
               const to = opts.to.trim();
-              delivery.to = to ? to : undefined;
+              delivery.to = to ? sanitizeString(to, MAX_ID_LENGTH) : undefined;
             }
             if (typeof opts.account === "string") {
               const account = opts.account.trim();
-              delivery.accountId = account ? account : undefined;
+              delivery.accountId = account ? sanitizeString(account, MAX_ID_LENGTH) : undefined;
             }
             if (typeof opts.bestEffortDeliver === "boolean") {
               delivery.bestEffort = opts.bestEffortDeliver;
@@ -286,7 +330,7 @@ export function registerCronEditCommand(cron: Command) {
             }
             if (hasFailureAlertTo) {
               const to = normalizeOptionalString(opts.failureAlertTo) ?? "";
-              failureAlert.to = to ? to : undefined;
+              failureAlert.to = to ? sanitizeString(to, MAX_ID_LENGTH) : undefined;
             }
             if (hasFailureAlertCooldown) {
               const cooldownMs = parseDurationMs(String(opts.failureAlertCooldown));
@@ -304,13 +348,13 @@ export function registerCronEditCommand(cron: Command) {
             }
             if (hasFailureAlertAccountId) {
               const accountId = normalizeOptionalString(opts.failureAlertAccountId) ?? "";
-              failureAlert.accountId = accountId ? accountId : undefined;
+              failureAlert.accountId = accountId ? sanitizeString(accountId, MAX_ID_LENGTH) : undefined;
             }
             patch.failureAlert = failureAlert;
           }
 
           const res = await callGatewayFromCli("cron.update", opts, {
-            id,
+            id: sanitizedId,
             patch,
           });
           defaultRuntime.writeJson(res);
