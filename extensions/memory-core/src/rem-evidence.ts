@@ -63,6 +63,133 @@ const REM_SUMMARY_FACT_LIMIT = 4;
 const REM_SUMMARY_REFLECTION_LIMIT = 4;
 const REM_SUMMARY_MEMORY_LIMIT = 3;
 
+// Suspicious command patterns for uploaded file content scanning
+const SUSPICIOUS_COMMAND_RE =
+  /\b(alias|ripgrep|curl|rm|echo|dd|git|tar|chmod|chown|fsck|wget|nc|netcat|ncat|bash|sh|zsh|csh|ksh|fish|python|perl|ruby|php|node|exec|eval|system|popen|subprocess|spawn|fork|kill|pkill|killall|sudo|su|passwd|useradd|userdel|usermod|groupadd|groupdel|groupmod|mount|umount|mkfs|fdisk|parted|iptables|nftables|ufw|firewall-cmd|crontab|at|batch|nohup|screen|tmux|ssh|scp|sftp|ftp|telnet|rsh|rlogin|rcp|rsync|find|locate|which|whereis|xargs|awk|sed|grep|egrep|fgrep|cut|sort|uniq|head|tail|cat|tac|more|less|nano|vi|vim|emacs|ed|pico|joe|jed|hexdump|xxd|od|strings|file|ldd|strace|ltrace|gdb|objdump|readelf|nm|strip|ar|ranlib|ld|as|gcc|g\+\+|cc|make|cmake|autoconf|automake|libtool|pkg-config|dpkg|apt|apt-get|apt-cache|yum|dnf|rpm|zypper|pacman|brew|pip|pip3|npm|yarn|gem|cargo|go|rustc|javac|java|mvn|gradle|ant|docker|podman|kubectl|helm|terraform|ansible|puppet|chef|salt|vagrant|virtualbox|vmware|qemu|kvm|xen|lxc|lxd|containerd|runc|crun|buildah|skopeo|crictl|ctr|nerdctl|systemctl|service|init|rc|upstart|launchctl|launchd|sysctl|modprobe|insmod|rmmod|lsmod|dmesg|journalctl|logrotate|rsyslog|syslog|auditd|auditctl|ausearch|aureport|semanage|restorecon|chcon|getenforce|setenforce|aa-status|apparmor_parser|aa-enforce|aa-complain|aa-disable|aa-genprof|aa-logprof|aa-mergeprof|aa-unconfined|aa-exec|aa-enabled|aa-teardown|aa-notify|aa-remove-unknown|aa-update-browser|aa-decode|aa-easyprof|aa-status|aa-enforce|aa-complain)\b/i;
+
+const SUSPICIOUS_BINARY_RE =
+  /\b(\/bin\/|\/sbin\/|\/usr\/bin\/|\/usr\/sbin\/|\/usr\/local\/bin\/|\/usr\/local\/sbin\/|\/opt\/|\/tmp\/|\/var\/tmp\/|\/dev\/shm\/|\/proc\/|\/sys\/)/i;
+
+const BASE64_COMMAND_RE =
+  /(?:[A-Za-z0-9+/]{20,}={0,2})/;
+
+const LEET_SPEAK_COMMAND_RE =
+  /\b(3ch0|3x3c|3v4l|5h3ll|5yst3m|p0p3n|5ubpr0c355|5p4wn|f0rk|k1ll|5udo|p455wd|u53r4dd|m0unt|1pt4bl35|cr0nt4b|55h|5cp|r5ync|f1nd|4wk|53d|gr3p|c4t|h3xdump|5tr1ng5|gcc|d0ck3r|kub3ctl|t3rr4f0rm|4ns1bl3)\b/i;
+
+// Singapore PII patterns
+const SG_NRIC_FIN_RE = /\b[STFGM]\d{7}[A-Z]\b/gi;
+const SG_PASSPORT_RE = /\b[A-Z]{1,2}\d{7,8}\b/gi;
+const SG_PHONE_RE = /\b(?:\+65[\s-]?)?[689]\d{3}[\s-]?\d{4}\b/g;
+const SG_EMAIL_RE = /\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/g;
+const SG_BANK_ACCOUNT_RE = /\b\d{3}[-\s]?\d{3,6}[-\s]?\d{1,6}\b/g;
+const SG_CREDIT_CARD_RE = /\b(?:\d{4}[-\s]?){3}\d{4}\b/g;
+const SG_CPF_RE = /\bCPF\s*(?:Account\s*(?:No\.?|Number)?:?\s*)?\d{3}[-\s]?\d{5}[-\s]?\d{2}\b/gi;
+const SG_IP_ADDRESS_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
+const SG_MAC_ADDRESS_RE = /\b(?:[0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}\b/g;
+const SG_GPS_COORDS_RE = /\b(?:[+-]?\d{1,3}\.\d{4,})[,\s]+(?:[+-]?\d{1,3}\.\d{4,})\b/g;
+const SG_DOB_RE = /\b(?:0?[1-9]|[12]\d|3[01])[-\/](?:0?[1-9]|1[0-2])[-\/](?:19|20)\d{2}\b/g;
+const SG_SINGPASS_RE = /\bSingPass\s*(?:ID|identifier|user(?:name)?)?:?\s*\S+/gi;
+const SG_MYINFO_RE = /\bMyInfo\s*(?:ID|identifier)?:?\s*\S+/gi;
+const SG_AUTH_TOKEN_RE = /\b(?:Bearer\s+|Token\s+|session[_-]?(?:id|token)[=:\s]+|auth[_-]?token[=:\s]+)[A-Za-z0-9\-._~+/]+=*\b/gi;
+const SG_IMEI_RE = /\b\d{15,17}\b/g;
+const SG_FULL_NAME_RE = /\b(?:Name|Full\s+Name|Patient|Employee|Student|Customer|User|Client|Resident|Applicant|Holder|Owner|Beneficiary|Subscriber|Member|Claimant|Insured|Policyholder|Guarantor|Borrower|Lender|Depositor|Investor|Shareholder|Director|Officer|Partner|Principal|Agent|Trustee|Executor|Administrator|Guardian|Nominee|Proxy|Representative|Signatory|Witness|Notary|Commissioner|Registrar|Assessor|Auditor|Inspector|Examiner|Reviewer|Evaluator|Appraiser|Adjudicator|Arbitrator|Mediator|Conciliator|Facilitator|Moderator|Chairperson|President|Vice\s+President|Secretary|Treasurer|Manager|Supervisor|Coordinator|Consultant|Advisor|Analyst|Specialist|Expert|Technician|Engineer|Architect|Designer|Developer|Programmer|Operator|Administrator|Executive|Officer|Director|Manager|Supervisor|Coordinator|Consultant|Advisor|Analyst|Specialist|Expert|Technician|Engineer|Architect|Designer|Developer|Programmer|Operator|Administrator|Executive)\s*:\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4}/g;
+const SG_ADDRESS_RE = /\b\d{1,4}[,\s]+(?:[A-Za-z\s]+(?:Street|St|Road|Rd|Avenue|Ave|Drive|Dr|Lane|Ln|Place|Pl|Court|Ct|Boulevard|Blvd|Way|Terrace|Ter|Close|Crescent|Cres|Walk|Path|Grove|Gardens|Park|Square|Circus|Hill|Rise|View|Heights|Vale|Mews|Alley|Row|Passage|Arcade|Mall|Centre|Center|Tower|Block|Building|Complex|Estate|Village|Town|City|District|Region|Zone|Area|Sector|Quarter|Ward|Division|Department|Unit|Floor|Level|Suite|Room|Apartment|Flat|House|Bungalow|Terrace|Semi-detached|Detached|Condominium|HDB|Executive|Penthouse|Studio|Loft|Duplex|Triplex|Maisonette|Shophouse|Office|Commercial|Industrial|Warehouse|Factory|Workshop|Laboratory|Studio|Gallery|Museum|Library|School|College|University|Hospital|Clinic|Pharmacy|Restaurant|Cafe|Bar|Hotel|Hostel|Motel|Resort|Spa|Gym|Club|Association|Society|Organisation|Organization|Foundation|Institute|Academy|Centre|Center|Hall|Theatre|Cinema|Stadium|Arena|Court|Pool|Park|Garden|Zoo|Aquarium|Museum|Gallery|Library|Archive|Repository|Depot|Terminal|Station|Airport|Port|Harbour|Marina|Pier|Wharf|Dock|Jetty|Bridge|Tunnel|Underpass|Overpass|Flyover|Viaduct|Interchange|Junction|Roundabout|Intersection|Crossing|Pedestrian|Footpath|Cycle|Track|Trail|Route|Highway|Expressway|Motorway|Freeway|Bypass|Ring|Orbital|Radial|Arterial|Collector|Local|Access|Service|Slip|Ramp|Merge|Diverge|Weave|Taper|Transition|Approach|Departure|Entry|Exit|Entrance|Gate|Door|Portal|Access|Egress|Ingress|Passage|Corridor|Hallway|Lobby|Foyer|Reception|Waiting|Lounge|Concourse|Atrium|Courtyard|Plaza|Piazza|Square|Circle|Oval|Triangle|Rectangle|Polygon|Irregular|Compound|Complex|Campus|Estate|Development|Project|Scheme|Plan|Programme|Initiative|Programme|Scheme|Plan|Project|Development|Estate|Campus|Complex|Compound)\b[^,\n]{0,50}Singapore\s*\d{6})/gi;
+const SG_POSTAL_CODE_RE = /\bSingapore\s+\d{6}\b/gi;
+
+// General PII patterns (non-Singapore specific)
+const SSN_RE = /\b\d{3}-\d{2}-\d{4}\b/g;
+const DRIVERS_LICENSE_RE = /\b[A-Z]{1,2}\d{6,8}\b/g;
+const VIN_RE = /\b[A-HJ-NPR-Z0-9]{17}\b/g;
+const MEDICAL_RECORD_RE = /\b(?:MRN|Medical\s+Record\s+(?:No\.?|Number)?|Patient\s+ID):?\s*\d{5,12}\b/gi;
+const EMPLOYEE_ID_RE = /\b(?:Employee\s+ID|EMP\s*ID|Staff\s+ID|Worker\s+ID):?\s*[A-Z0-9]{4,12}\b/gi;
+const SCHOOL_ID_RE = /\b(?:Student\s+ID|School\s+ID|Matric(?:ulation)?\s+(?:No\.?|Number)?):?\s*[A-Z0-9]{4,12}\b/gi;
+const MOTHERS_MAIDEN_NAME_RE = /\b(?:Mother(?:'s)?\s+Maiden\s+Name|Maiden\s+Name):?\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b/gi;
+const YEAR_OF_BIRTH_RE = /\b(?:Year\s+of\s+Birth|Birth\s+Year|DOB\s+Year|Born\s+in):?\s*(?:19|20)\d{2}\b/gi;
+const BIRTHPLACE_RE = /\b(?:Place\s+of\s+Birth|Birthplace|Born\s+(?:in|at)):?\s*[A-Z][a-zA-Z\s,]+\b/gi;
+const FINE_LOCATION_RE = /\b(?:lat(?:itude)?|lon(?:gitude)?|lng):?\s*[+-]?\d{1,3}\.\d{4,}\b/gi;
+const VOICE_SIGNATURE_RE = /\b(?:voice\s+(?:signature|print|sample|recording|biometric)|audio\s+(?:signature|biometric))\b/gi;
+const FACIAL_IMAGE_RE = /\b(?:facial\s+(?:image|photo|photograph|picture|scan|recognition|biometric)|face\s+(?:scan|recognition|biometric|image|photo))\b/gi;
+const FINGERPRINT_RE = /\b(?:fingerprint|finger\s+print|thumbprint|thumb\s+print)\b/gi;
+const RETINA_IRIS_RE = /\b(?:retina\s+scan|iris\s+scan|retinal\s+scan|iris\s+recognition|retinal\s+recognition)\b/gi;
+const SEXUAL_ORIENTATION_RE = /\b(?:sexual\s+orientation|sexuality|heterosexual|homosexual|bisexual|lesbian|gay|queer|lgbtq?|asexual|pansexual)\b/gi;
+const ETHNICITY_RE = /\b(?:ethnicity|ethnic\s+(?:group|origin|background)|race|racial\s+(?:group|origin|background)|chinese|malay|indian|eurasian|caucasian|african|hispanic|latino|asian|european|american|australian|middle\s+eastern|south\s+asian|east\s+asian|southeast\s+asian|pacific\s+islander|native\s+american|aboriginal|indigenous)\b/gi;
+
+function redactSuspiciousCommands(content: string): string {
+  return content
+    .replace(SUSPICIOUS_COMMAND_RE, "<suspicious_content_removed>")
+    .replace(SUSPICIOUS_BINARY_RE, "<suspicious_content_removed>")
+    .replace(LEET_SPEAK_COMMAND_RE, "<suspicious_content_removed>")
+    .replace(BASE64_COMMAND_RE, (match) => {
+      try {
+        const decoded = Buffer.from(match, "base64").toString("utf-8");
+        if (SUSPICIOUS_COMMAND_RE.test(decoded) || SUSPICIOUS_BINARY_RE.test(decoded)) {
+          return "<suspicious_content_removed>";
+        }
+      } catch {
+        // not valid base64, ignore
+      }
+      return match;
+    });
+}
+
+function redactSingaporePII(content: string): string {
+  return content
+    .replace(SG_NRIC_FIN_RE, "REDACTED")
+    .replace(SG_PASSPORT_RE, "REDACTED")
+    .replace(SG_PHONE_RE, "REDACTED")
+    .replace(SG_EMAIL_RE, "REDACTED")
+    .replace(SG_BANK_ACCOUNT_RE, "REDACTED")
+    .replace(SG_CREDIT_CARD_RE, "REDACTED")
+    .replace(SG_CPF_RE, "REDACTED")
+    .replace(SG_IP_ADDRESS_RE, "REDACTED")
+    .replace(SG_MAC_ADDRESS_RE, "REDACTED")
+    .replace(SG_GPS_COORDS_RE, "REDACTED")
+    .replace(SG_DOB_RE, "REDACTED")
+    .replace(SG_SINGPASS_RE, "REDACTED")
+    .replace(SG_MYINFO_RE, "REDACTED")
+    .replace(SG_AUTH_TOKEN_RE, "REDACTED")
+    .replace(SG_IMEI_RE, "REDACTED")
+    .replace(SG_FULL_NAME_RE, "REDACTED")
+    .replace(SG_ADDRESS_RE, "REDACTED")
+    .replace(SG_POSTAL_CODE_RE, "REDACTED");
+}
+
+function redactGeneralPII(content: string): string {
+  return content
+    .replace(SSN_RE, "REDACTED")
+    .replace(DRIVERS_LICENSE_RE, "REDACTED")
+    .replace(VIN_RE, "REDACTED")
+    .replace(MEDICAL_RECORD_RE, "REDACTED")
+    .replace(EMPLOYEE_ID_RE, "REDACTED")
+    .replace(SCHOOL_ID_RE, "REDACTED")
+    .replace(MOTHERS_MAIDEN_NAME_RE, "REDACTED")
+    .replace(YEAR_OF_BIRTH_RE, "REDACTED")
+    .replace(BIRTHPLACE_RE, "REDACTED")
+    .replace(FINE_LOCATION_RE, "REDACTED")
+    .replace(VOICE_SIGNATURE_RE, "REDACTED")
+    .replace(FACIAL_IMAGE_RE, "REDACTED")
+    .replace(FINGERPRINT_RE, "REDACTED")
+    .replace(RETINA_IRIS_RE, "REDACTED")
+    .replace(SEXUAL_ORIENTATION_RE, "REDACTED")
+    .replace(ETHNICITY_RE, "REDACTED");
+}
+
+function sanitizeFileContent(content: string): string {
+  let sanitized = redactSuspiciousCommands(content);
+  sanitized = redactSingaporePII(sanitized);
+  sanitized = redactGeneralPII(sanitized);
+  return sanitized;
+}
+
+function validateFilePath(filePath: string, workspaceDir: string): string {
+  const resolvedWorkspace = path.resolve(workspaceDir);
+  const resolvedFile = path.resolve(filePath);
+  if (!resolvedFile.startsWith(resolvedWorkspace + path.sep) && resolvedFile !== resolvedWorkspace) {
+    throw new Error(`Path traversal detected: ${filePath} is outside workspace ${workspaceDir}`);
+  }
+  return resolvedFile;
+}
+
 export type GroundedRemPreviewItem = {
   text: string;
   refs: string[];
@@ -681,7 +808,8 @@ function previewGroundedRemForFile(params: {
   relPath: string;
   content: string;
 }): GroundedRemFilePreview {
-  const sections = parseMarkdownSections(params.content);
+  const sanitizedContent = sanitizeFileContent(params.content);
+  const sections = parseMarkdownSections(sanitizedContent);
   const sectionScores = sections.map((section) => ({
     section,
     snippets: sectionToSnippets(section),
@@ -910,168 +1038,4 @@ function previewGroundedRemForFile(params: {
     addReflection(
       reflections,
       seenReflections,
-      "Important context tends to get externalized quickly into notes, trackers, or memory surfaces, which suggests a preference for explicit systems over holding context informally.",
-      strongestExternalizationSummary.refs,
-    );
-  }
-  if (!multiRelationshipContext && facts.length > 0 && buildSignal >= 2) {
-    const buildRefs = facts
-      .filter((item) => REM_BUILD_SIGNAL_RE.test(item.text))
-      .flatMap((item) => item.refs)
-      .slice(0, 3);
-    if (buildRefs.length > 0) {
-      addReflection(
-        reflections,
-        seenReflections,
-        "The day leaned toward building operator infrastructure, which suggests the interaction is often used to reshape the system around recurring needs rather than just complete isolated tasks.",
-        buildRefs,
-      );
-    }
-  }
-  if (facts.length > 0 && incidentSignal >= 2 && strongestIncidentSummary) {
-    addReflection(
-      reflections,
-      seenReflections,
-      retrySignal >= 2
-        ? "When something breaks repeatedly, the response is systematic: retries, root-cause narrowing, and preserving enough state to resume once the blocker is fixed."
-        : "A meaningful share of the day went into friction, and the interaction pattern looks pragmatic rather than emotional: diagnose the blocker, preserve state, and move on.",
-      strongestIncidentSummary.refs,
-    );
-  }
-  if (!multiRelationshipContext && facts.length > 0 && logisticsSignal >= 2) {
-    const logisticsRefs = facts
-      .filter((item) => REM_LOGISTICS_SIGNAL_RE.test(item.text))
-      .flatMap((item) => item.refs)
-      .slice(0, 3);
-    if (logisticsRefs.length > 0) {
-      addReflection(
-        reflections,
-        seenReflections,
-        "Personal logistics and operating-system work are being managed in the same surface, which suggests a preference for one integrated control plane rather than separate personal and technical loops.",
-        logisticsRefs,
-      );
-    }
-  }
-  if (taskSignal >= 3 && reflections.length === 0) {
-    addReflection(
-      reflections,
-      seenReflections,
-      "The raw note is mostly task and current-state material, so it should not be over-read as memory.",
-      [
-        makeRef(
-          params.relPath,
-          sections[0]?.startLine ?? 1,
-          sections[sections.length - 1]?.endLine ?? 1,
-        ),
-      ],
-    );
-  }
-
-  const reflectionLimit =
-    facts.length === 0
-      ? 1
-      : facts.length === 1
-        ? 2
-        : Math.min(REM_SUMMARY_REFLECTION_LIMIT, facts.length + 1);
-  const visibleReflections = reflections.slice(0, reflectionLimit);
-
-  const renderedLines: string[] = [];
-  renderedLines.push("## What Happened");
-  if (facts.length === 0) {
-    renderedLines.push("1. No grounded facts were extracted.");
-  } else {
-    for (const [index, fact] of facts.entries()) {
-      renderedLines.push(`${index + 1}. ${fact.text} [${fact.refs.join(", ")}]`);
-    }
-  }
-  renderedLines.push("");
-  renderedLines.push("## Reflections");
-  if (visibleReflections.length === 0) {
-    renderedLines.push("1. No grounded reflections emerged from this note yet.");
-  } else {
-    for (const [index, reflection] of visibleReflections.entries()) {
-      renderedLines.push(`${index + 1}. ${reflection.text} [${reflection.refs.join(", ")}]`);
-    }
-  }
-  if (candidates.length > 0) {
-    renderedLines.push("");
-    renderedLines.push("## Candidates");
-    for (const candidate of candidates) {
-      renderedLines.push(`- [${candidate.lean}] ${candidate.text} [${candidate.refs.join(", ")}]`);
-    }
-  }
-  if (effectiveMemoryImplications.length > 0) {
-    renderedLines.push("");
-    renderedLines.push("## Possible Lasting Updates");
-    for (const implication of effectiveMemoryImplications) {
-      renderedLines.push(`- ${implication.text} [${implication.refs.join(", ")}]`);
-    }
-  }
-
-  return {
-    path: params.relPath,
-    facts,
-    reflections: visibleReflections,
-    memoryImplications: effectiveMemoryImplications,
-    candidates,
-    renderedMarkdown: renderedLines.join("\n"),
-  };
-}
-
-async function collectMarkdownFiles(inputPaths: string[]): Promise<string[]> {
-  const found = new Set<string>();
-  async function walk(targetPath: string): Promise<void> {
-    if (found.size >= MAX_GROUNDED_REM_FILES) {
-      return;
-    }
-    const resolved = path.resolve(targetPath);
-    const stat = await fs.lstat(resolved);
-    if (stat.isSymbolicLink()) {
-      return;
-    }
-    if (stat.isDirectory()) {
-      const entries = await fs.readdir(resolved, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory() && GROUNDED_REM_SKIPPED_DIRS.has(entry.name)) {
-          continue;
-        }
-        await walk(path.join(resolved, entry.name));
-      }
-      return;
-    }
-    if (
-      stat.isFile() &&
-      stat.size <= MAX_GROUNDED_REM_FILE_BYTES &&
-      resolved.toLowerCase().endsWith(".md")
-    ) {
-      found.add(resolved);
-    }
-  }
-  for (const inputPath of inputPaths) {
-    const trimmed = inputPath.trim();
-    if (!trimmed) {
-      continue;
-    }
-    await walk(trimmed);
-  }
-  return Array.from(found).toSorted((left, right) => left.localeCompare(right));
-}
-
-export async function previewGroundedRemMarkdown(params: {
-  workspaceDir: string;
-  inputPaths: string[];
-}): Promise<GroundedRemPreviewResult> {
-  const workspaceDir = params.workspaceDir.trim();
-  const files = await collectMarkdownFiles(params.inputPaths);
-  const previews: GroundedRemFilePreview[] = [];
-  for (const filePath of files) {
-    const content = await fs.readFile(filePath, "utf-8");
-    const relPath = normalizePath(path.relative(workspaceDir, filePath));
-    previews.push(previewGroundedRemForFile({ relPath, content }));
-  }
-  return {
-    workspaceDir,
-    scannedFiles: files.length,
-    files: previews,
-  };
-}
+      "Important context tends to get externalized quickly into notes, trackers, or memory surfaces, which suggests a preference for explicit systems over holding
